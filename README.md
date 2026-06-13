@@ -319,10 +319,10 @@ fanbox/
 
 | 平台 / Platform | 链接 / Link |
 |------|------|
-| 𝕏 Twitter | [@daodao166888](https://x.com/daodao166888) |
-| 💬 公众号 / WeChat | 刀刀创业笔记 |
-| 📱 微信 / WeChat | omg88511（备注：GitHub） |
-| 🐙 GitHub | [daodao166888](https://github.com/daodao166888) |
+| 𝕏  Twitter | [@daodao166888](https://x.com/daodao166888) |
+| 💬  公众号 / WeChat | 刀刀创业笔记 |
+| 📱  微信 / WeChat | omg88511（备注：GitHub） |
+| 🐙  GitHub | [daodao166888](https://github.com/daodao166888) |
 
 ### 致谢原作者
 
