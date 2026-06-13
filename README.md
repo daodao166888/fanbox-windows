@@ -160,6 +160,20 @@ npx electron .
 
 或双击 `启动FanBox桌面版.bat`
 
+### 创建桌面快捷方式 / Create Desktop Shortcut
+
+运行以下 PowerShell 命令，会在桌面生成带图标的快捷方式：
+
+```powershell
+$ws = New-Object -ComObject WScript.Shell
+$sc = $ws.CreateShortcut("$env:USERPROFILE\Desktop\FanBox.lnk")
+$sc.TargetPath = "$PWD\node_modules\electron\dist\electron.exe"
+$sc.Arguments = "."
+$sc.WorkingDirectory = "$PWD"
+$sc.IconLocation = "$PWD\build\icon.ico,0"
+$sc.Save()
+```
+
 ### 打包成安装包 / Build Installer
 
 ```bash
