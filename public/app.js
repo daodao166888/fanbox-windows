@@ -2166,6 +2166,12 @@ function applyTheme(skin, rerender = true) {
   document.querySelectorAll('#theme-switch .theme-seg button').forEach((b) => b.classList.toggle('active', b.dataset.skin === skin));
   if (typeof term !== 'undefined' && term.sessions.length) term.retheme();
   if (typeof mona !== 'undefined') mona.retheme();
+  // 切换桌面端窗口图标
+  console.log('[fanbox] checking fanboxSkin:', !!window.fanboxSkin);
+  if (window.fanboxSkin && window.fanboxSkin.setIcon) {
+    console.log('[fanbox] calling setIcon with skin:', skin);
+    window.fanboxSkin.setIcon(skin).then(r => console.log('[fanbox] setIcon result:', r));
+  }
   if (rerender && state.entries.length) {
     renderFiles();
     // 预览里的代码高亮配色随皮肤切换，重渲染当前选中项

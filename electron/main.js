@@ -452,3 +452,33 @@ ipcMain.handle('fs:watch', (e, { dir }) => {
   startWatch(dir);
   return { ok: true };
 });
+
+// ---------- 切换皮肤图标（仅 Windows）----------
+const SKIN_ICONS = {
+  terminal: path.join(__dirname, '..', 'build', 'icon-terminal.ico'),
+  warm: path.join(__dirname, '..', 'build', 'icon-archive.ico'),
+  editorial: path.join(__dirname, '..', 'build', 'icon-editorial.ico'),
+};
+ipcMain.handle('skin:set-icon', (e, { skin }) => {
+  console.log('[fanbox] skin:set-icon called with', skin);
+  if (process.platform !== 'win32' || !win || win.isDestroyed()) {
+    console.log('[fanbox] skin:set-icon skipped: not win32 or no window');
+    return { ok: false };
+  }
+  const iconPath = SKIN_ICONS[skin];
+  console.log('[fanbox] iconPath:', iconPath);
+  if (!iconPath || !fs.existsSync(iconPath)) {
+    console.log('[fanbox] skin:set-icon skipped: icon not found');
+    return { ok: false, error: '图标不存在' };
+  }
+  try {
+    const img = nativeImage.createFromPath(iconPath);
+    console.log('[fanbox] icon size:', img.getSize());
+    win.setIcon(img);
+    console.log('[fanbox] setIcon success');
+    return { ok: true };
+  } catch (err) {
+    console.log('[fanbox] setIcon error:', err.message);
+    return { ok: false, error: err.message };
+  }
+});

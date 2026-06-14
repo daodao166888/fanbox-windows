@@ -151,14 +151,14 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 git clone https://github.com/daodao166888/fanbox-windows.git
 cd fanbox-windows
 
-# 安装依赖
+# 安装依赖（自动创建桌面快捷方式）
 npm install
 
 # 启动桌面版
 npx electron .
 ```
 
-或双击 `启动FanBox桌面版.bat`
+安装完成后，桌面会自动创建 `FanBox.lnk` 快捷方式，双击即可启动~
 
 ### 创建桌面快捷方式 / Create Desktop Shortcut
 
