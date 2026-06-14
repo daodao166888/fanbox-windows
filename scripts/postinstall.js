@@ -15,11 +15,6 @@ if (process.platform !== 'win32') {
   process.exit(0);
 }
 
-// 检查是否在 electron 环境中（避免重复执行）
-if (process.env.FANBOX_POSTINSTALL) {
-  process.exit(0);
-}
-
 const desktop = path.join(require('os').homedir(), 'Desktop');
 const shortcutPath = path.join(desktop, 'FanBox.lnk');
 const iconPath = path.join(__dirname, '..', 'build', 'icon.ico');
@@ -43,25 +38,32 @@ if (fs.existsSync(shortcutPath)) {
   process.exit(0);
 }
 
-// 使用 PowerShell 创建快捷方式
-const psScript = `
-$LANG = [System.Text.Encoding]::UTF8
-$ws = New-Object -ComObject WScript.Shell
-$sc = $ws.CreateShortcut('${shortcutPath.replace(/\\/g, '\\\\')}')
-$sc.TargetPath = '${electronPath.replace(/\\/g, '\\\\')}'
-$sc.Arguments = '.'
-$sc.WorkingDirectory = '${appDir.replace(/\\/g, '\\\\')}'
-$sc.IconLocation = '${iconPath.replace(/\\/g, '\\\\')},0'
-$sc.Save()
-Write-Host 'Created'
+// 创建临时 Python 脚本
+const tmpScript = path.join(require('os').tmpdir(), 'fanbox-create-shortcut.py');
+const pyContent = `
+import win32com.client
+import os
+
+ws = win32com.client.Dispatch('WScript.Shell')
+sc = ws.CreateShortcut(r'${shortcutPath.replace(/'/g, "''")}')
+sc.TargetPath = r'${electronPath.replace(/'/g, "''")}'
+sc.Arguments = '.'
+sc.WorkingDirectory = r'${appDir.replace(/'/g, "''")}'
+sc.IconLocation = r'${iconPath.replace(/'/g, "''")},0'
+sc.Save()
+print('Created')
 `;
 
 try {
   console.log('[fanbox] 正在创建桌面快捷方式...');
-  const result = execSync(`powershell -NoProfile -Command "${psScript.replace(/"/g, '\\"')}"`, {
+  fs.writeFileSync(tmpScript, pyContent, 'utf8');
+  const result = execSync(`python "${tmpScript}"`, {
     encoding: 'utf8',
     timeout: 10000,
   });
+
+  // 清理临时文件
+  try { fs.unlinkSync(tmpScript); } catch {}
 
   if (result.includes('Created')) {
     console.log('[fanbox] ✅ 桌面快捷方式已创建：FanBox.lnk');
@@ -69,6 +71,7 @@ try {
     console.log('[fanbox] ⚠️ 快捷方式创建完成');
   }
 } catch (err) {
+  // 清理临时文件
+  try { fs.unlinkSync(tmpScript); } catch {}
   console.log('[fanbox] ⚠️ 创建桌面快捷方式失败（不影响使用）');
-  console.log('[fanbox]    你可以手动创建：运行 scripts/create-shortcut.js');
 }
