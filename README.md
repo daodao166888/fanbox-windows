@@ -253,7 +253,8 @@ Original project: [alchaincyf/fanbox](https://github.com/alchaincyf/fanbox) by H
 | 平台 / Platform | 链接 / Link |
 |------|------|
 | 𝕏 Twitter | [@daodao166888](https://x.com/daodao166888) |
-| 📕 小红书 / Xiaohongshu | [daodao166888](https://www.xiaohongshu.com/user/profile/daodao166888) |
+| 💬 公众号 | 刀刀创业笔记 |
+| 📱 微信 | omg88511（备注：GitHub） |
 | 🌐 GitHub | [daodao166888](https://github.com/daodao166888) |
 
 ---
