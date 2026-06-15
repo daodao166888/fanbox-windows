@@ -205,6 +205,13 @@ npm run dist         # 打包签名 .dmg（产物在 dist/，不入 git）/ buil
 | 当前目录筛选 / Filter current folder | `/` | 打开/预览 / Open/preview | `↵` |
 | 结果上下选择 / Navigate results | `↑` `↓` | 关闭 / Close | `Esc` |
 
+## Version History · 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|----------|
+| v1.11.3-win | 2026-06-15 | 同步上游 v1.11.3，修复终端路径不可点击、面包屑图标偏高、HTML 预览图片裂图、终端找不到 claude |
+| v1.9.1-win | 2026-06-14 | 首个 Windows 版本，基于原作者 v1.9.1 适配 |
+
 <a id="privacy"></a>
 ## Privacy & security · 隐私与安全
 
@@ -231,89 +238,23 @@ The UI was designed with **[huashu-design](https://github.com/alchaincyf/huashu-
 Each development phase is reviewed by **5 independent subagents** playing different roles (heavy vibe coder / native-taste designer / zero-docs newcomer / ten-year terminal veteran / destructive QA), scoring the product + live screenshots + code. **Everything ships at ≥90 with zero red lines.** See `docs/05-验收角色与评分标准.md`.
 
 <a id="credits"></a>
-## Standing on the shoulders of giants · 建在巨人肩膀上
+## Credits · 致谢
 
-FanBox 的核心能力来自这些出色的开源项目：
+原项目：[alchaincyf/fanbox](https://github.com/alchaincyf/fanbox) by 花叔
 
-FanBox's core capabilities come from these excellent open-source projects:
+Original project: [alchaincyf/fanbox](https://github.com/alchaincyf/fanbox) by Huashu
 
-| 项目 / Project | 用在哪 / Used for | License |
-|---|---|---|
-| [Electron](https://www.electronjs.org/) | 桌面壳，让零依赖 Node 后端长出真实终端和原生能力<br>The desktop shell that gives a zero-dependency Node backend a real terminal and native powers | MIT |
-| [node-pty](https://github.com/microsoft/node-pty) | 伪终端，内嵌终端的「真 shell」来源<br>The pseudo-terminal behind the embedded "real shell" | MIT |
-| [xterm.js](https://xtermjs.org/) | 终端渲染（含 [addon-webgl](https://github.com/xtermjs/xterm.js) GPU 加速、addon-fit 自适应、addon-unicode11 CJK 宽字符）<br>Terminal rendering (addon-webgl GPU acceleration, addon-fit, addon-unicode11 for CJK) | MIT |
-| [Monaco Editor](https://microsoft.github.io/monaco-editor/) | 代码/JSON 编辑与 Git diff 视图，VS Code 同款内核<br>Code/JSON editing and Git diff view, the VS Code core | MIT |
-| [Milkdown](https://milkdown.dev/)（Crepe） | Markdown 所见即所得编辑<br>Markdown WYSIWYG editing | MIT |
-| [marked](https://marked.js.org/) | Markdown 预览渲染<br>Markdown preview rendering | MIT |
-| [highlight.js](https://highlightjs.org/) | 代码语法高亮<br>Syntax highlighting | BSD-3-Clause |
-| [esbuild](https://esbuild.github.io/) | 把 Milkdown 打成单文件本地 vendor，运行时保持 no-build<br>Bundling Milkdown into a single local vendor file, keeping runtime no-build | MIT |
-| [electron-builder](https://www.electron.build/) | 打包签名 dmg<br>Packaging and signing the dmg | MIT |
-| [Playwright](https://playwright.dev/) | 驱动 Electron 实拍本 README 截图 + UI 验证<br>Driving Electron for README screenshots + UI verification | Apache-2.0 |
-
-所有前端依赖都 vendor 到本地（`public/vendor/`），这是「离线完全可用」的底气，也意味着上面每个项目的代码真实地跑在你机器上。谢谢它们。
-
-Every frontend dependency is vendored locally (`public/vendor/`) — that's what makes "fully usable offline" true, and it means each project above actually runs on your machine. Thank you.
-
-<a id="architecture"></a>
-## Architecture · 技术架构
-
-| 层 / Layer | 用什么 / Stack |
-|---|---|
-| 后端 / Backend | 零依赖 Node.js `server.js`（文件 API + 静态服务 + 缩略图）<br>Zero-dependency Node.js `server.js` (file APIs + static serving + thumbnails) |
-| 桌面壳 / Desktop shell | Electron 33 + node-pty（asarUnpack 原生模块）<br>Electron 33 + node-pty (asarUnpack native module) |
-| 终端 / Terminal | xterm.js + WebGL + unicode11 |
-| 编辑器 / Editors | Monaco（代码）+ Milkdown Crepe（Markdown）<br>Monaco (code) + Milkdown Crepe (Markdown) |
-| 打包 / Packaging | electron-builder → 签名 arm64 .dmg<br>electron-builder → signed arm64 .dmg |
-
-<details>
-<summary>项目结构 / Project layout</summary>
-
-```
-fanbox/
-├── server.js               # 零依赖 Node 后端（文件 API + 缩略图 + 静态服务）
-│                           # Zero-dependency Node backend (file APIs + thumbnails + static)
-├── electron/
-│   ├── main.js             # 主进程（窗口/pty/剪贴板/fs.watch/菜单）
-│   │                       # Main process (window/pty/clipboard/fs.watch/menu)
-│   └── preload.js          # 暴露 fanboxPty / fanboxFs / fanboxClipboard
-│                           # Exposes fanboxPty / fanboxFs / fanboxClipboard
-├── public/
-│   ├── index.html
-│   ├── style.css
-│   ├── app.js              # 前端单页应用 / Frontend single-page app
-│   └── vendor/             # xterm / monaco / milkdown 本地资源
-│                           # xterm / monaco / milkdown local assets
-├── src-vendor/             # esbuild 入口，产出 public/vendor/milkdown
-│                           # esbuild entries producing public/vendor/milkdown
-├── build/                  # 图标 + entitlements / Icons + entitlements
-├── docs/                   # 概念/PRD/路线图/验收标准
-│                           # Concepts/PRD/roadmap/acceptance criteria
-└── experiments/            # 实验脚本（含 README 截图脚本）
-                            # Experiment scripts (incl. README screenshot script)
-```
-
-</details>
+---
 
 ## Author · 关于作者
 
-**花叔 Huashu**——AI Native Coder，独立开发者。代表作：小猫补光灯（App Store 付费榜 Top1）。
-
-**Huashu (花叔)** — AI Native Coder, indie developer. Known for Cat Light (App Store paid chart Top 1).
+**daodao166888** — AI 搞钱实战派，工具拆解 + 工作流 + 资讯分享。
 
 | 平台 / Platform | 链接 / Link |
 |------|------|
-| 🌐 官网 / Web | [bookai.top](https://bookai.top) · [huasheng.ai](https://www.huasheng.ai) |
-| 𝕏 Twitter | [@AlchainHust](https://x.com/AlchainHust) |
-| 📺 B站 / Bilibili | [花叔](https://space.bilibili.com/14097567) |
-| 📕 小红书 / Xiaohongshu | [花叔](https://www.xiaohongshu.com/user/profile/5abc6f17e8ac2b109179dfdf) |
-| 💬 公众号 / WeChat | 微信搜「花叔」 / Search "花叔" |
-
-更多 AI 造物：
-
-More AI creations:
-
-- [女娲.skill](https://github.com/alchaincyf/nuwa-skill)（蒸馏任何人的思维方式 / distill anyone's way of thinking）
-- [huashu-design](https://github.com/alchaincyf/huashu-design)（一句话拿回一份能交付的设计 / a deliverable design from one sentence）
+| 𝕏 Twitter | [@daodao166888](https://x.com/daodao166888) |
+| 📕 小红书 / Xiaohongshu | [daodao166888](https://www.xiaohongshu.com/user/profile/daodao166888) |
+| 🌐 GitHub | [daodao166888](https://github.com/daodao166888) |
 
 ---
 
@@ -322,6 +263,6 @@ More AI creations:
 **Finder** 帮你管理文件。**IDE** 帮你写代码。**FanBox** 帮你看清 AI 在你机器上干了什么。<br>
 **Finder** manages your files. **IDEs** write your code. **FanBox** shows you what AI did on your machine.<br><br>
 
-MIT License © [花叔 Huashu](https://github.com/alchaincyf)
+MIT License © [花叔 Huashu](https://github.com/alchaincyf) · Windows 版适配 by [daodao166888](https://github.com/daodao166888)
 
 </div>
