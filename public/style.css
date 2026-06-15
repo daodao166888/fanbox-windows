@@ -6,6 +6,8 @@
   --font-ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Segoe UI", "Inter", sans-serif;
   --font-display: var(--font-ui);
   --font-mono: ui-monospace, "SF Mono", Menlo, "JetBrains Mono", monospace;
+  /* 内嵌终端字体：优先用户装的 Nerd Font（starship/powerline 字形才不变 tofu），没装回退系统等宽 */
+  --font-term: "JetBrainsMono Nerd Font", "MesloLGS NF", "FiraCode Nerd Font", "Hack Nerd Font", "Symbols Nerd Font Mono", ui-monospace, "SF Mono", Menlo, monospace;
   --font-fname: var(--font-ui);
 }
 
@@ -94,6 +96,8 @@ body {
 /* 折叠：侧栏退出栅格 + 单列让主区铺满（JS applyLayout 也会内联同值，双保险） */
 #app.sidebar-collapsed { grid-template-columns: 1fr; }
 #app.sidebar-collapsed > #sidebar { display: none; }
+/* 折叠后顶栏贴到窗口左缘，给 macOS 红绿灯让位 */
+#app.sidebar-collapsed #topbar { padding-left: 80px; }
 
 /* ---------- 侧边栏 ---------- */
 #sidebar {
@@ -207,6 +211,8 @@ kbd {
 .breadcrumb::-webkit-scrollbar { display: none; }
 .breadcrumb .crumb { padding: 4px 7px; border-radius: 6px; cursor: pointer; color: var(--text-dim); white-space: nowrap; }
 .breadcrumb .crumb:hover { background: var(--bg-3); color: var(--text); }
+/* 图标（电脑/时钟）默认 baseline 对齐会偏高，改 middle 与同行文字居中 */
+.breadcrumb .crumb svg { vertical-align: middle; }
 /* 当前目录高亮，一眼识别文件面板真正所在 */
 .breadcrumb .crumb.last { color: var(--accent); font-weight: 700; background: var(--accent-soft); padding-right: 9px; }
 .breadcrumb .sep { color: var(--text-faint); }
@@ -519,6 +525,9 @@ kbd {
 #preview-resizer:hover::after, #preview-resizer.dragging::after,
 #terminal-resizer:hover::after, #terminal-resizer.dragging::after { opacity: 0.55; }
 .pv-img { cursor: zoom-in; }
+/* 图片全屏：在窗口中居中，并整图缩放到铺满可视区（约束 max-height 避免 flex 居中把高图顶部裁掉） */
+#preview.is-max .preview-body:has(> .pv-img) { display: flex; align-items: center; justify-content: center; }
+#preview.is-max .preview-body > .pv-img { max-height: 100%; }
 /* 透明图垫棋盘格，白色/透明 PNG 也能看清边界 */
 .grid .item .icon .thumb, .pv-img, .lightbox img, .list .row .icon .thumb-sm {
   background: repeating-conic-gradient(color-mix(in srgb, var(--text) 11%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 14px 14px, var(--bg-3);
@@ -650,6 +659,7 @@ kbd {
 .editor-bar button.primary:hover { filter: brightness(1.06); }
 .editor-bar button.ghost-btn { color: var(--text-dim); }
 .editor-bar button.ghost-btn:hover { color: var(--text); border-color: var(--accent); }
+.editor-bar button:disabled { opacity: 0.32; cursor: default; pointer-events: none; }
 .editor-hint { font-size: 11px; color: var(--text-faint); margin-left: auto; }
 .editor-area {
   width: 100%; box-sizing: border-box; min-height: 60vh; resize: vertical;
@@ -870,23 +880,17 @@ kbd {
 
 /* ---------- 桌面 app：交通灯避让 + 顶部可拖拽 ---------- */
 /* hiddenInset 标题栏的红绿灯坐在左上角，给侧栏 logo 让出空间（浏览器版无此问题，不受影响）*/
-/* 仅 macOS 需要避让，Windows 不需要 */
-.mac.desktop #sidebar { padding-top: 40px; }
-/* Windows：给 titleBarOverlay 留出顶部空间 + 右侧避让（最小化/最大化/关闭按钮约 130px） */
-.win.desktop #sidebar { padding-top: 48px; }
-.win.desktop #topbar { padding: 12px 160px 12px 12px; min-height: 48px; }
-/* macOS 顶栏也给点呼吸感 */
-.mac.desktop #topbar { padding-top: 8px; padding-bottom: 8px; }
+.desktop #sidebar { padding-top: 40px; }
 .desktop .brand { -webkit-app-region: drag; }
-/* 整个顶栏可拖拽 */
+/* 顶栏空白处也可拖窗，但其中的按钮/面包屑保持可点 */
 .desktop #topbar { -webkit-app-region: drag; }
 /* 侧栏不做整体拖拽区：#sidebar 自身是滚动容器（overflow-y:auto），而 Electron 的
    app-region:drag 区域收不到滚轮事件——整栏 drag 会让滚动时灵时卡（#6 的方案回退）。
    拖窗用品牌区和顶栏，足够顺手 */
-.desktop #topbar > * { -webkit-app-region: no-drag; }
-/* 面包屑和空白处恢复拖拽 */
-.desktop #topbar .breadcrumb { -webkit-app-region: drag; }
-.desktop #topbar .breadcrumb * { -webkit-app-region: no-drag; }
+.desktop #topbar button, .desktop #topbar .breadcrumb, .desktop #topbar .seg, .desktop #topbar .toggle, .desktop #topbar input { -webkit-app-region: no-drag; }
+/* 预览全屏时顶栏被盖住，但它的 drag 区域是 OS 级遮罩、不认 z-index，会吞掉压在它上面的预览按钮的点击。
+   全屏期间把顶栏/品牌区的拖拽关掉，让预览自己的按钮可点（全屏本就不需要拖这条顶栏）。 */
+.desktop.preview-maxed #topbar, .desktop.preview-maxed .brand { -webkit-app-region: no-drag; }
 
 /* 终端头：跟随/定位 文字按钮 */
 .term-actions #file-follow, .term-actions #term-locate { font-size: 11px; padding: 3px 8px; font-family: var(--font-ui); }
@@ -904,10 +908,7 @@ kbd {
 /* 浏览器版的纸纹来自 body、能从无背景的主区透出；桌面 app 上面这组不透明底色会盖住它，单独补回 */
 .desktop[data-theme="warm"] #main, .desktop[data-theme="warm"] #content { background-image: radial-gradient(rgba(140, 110, 70, 0.05) 1px, transparent 1px); background-size: 4px 4px; }
 .desktop #topbar { background-color: var(--bg-2); }
-/* macOS：毛玻璃半透明 */
-.mac.desktop #sidebar { background-color: color-mix(in srgb, var(--panel) 80%, transparent); }
-/* Windows：不透明背景（不支持 vibrancy） */
-.win.desktop #sidebar { background-color: var(--panel); }
+.desktop #sidebar { background-color: color-mix(in srgb, var(--panel) 80%, transparent); }
 
 /* 跟随/定位 改为图标+文字，覆盖前面的纯文字规则 */
 .term-actions #file-follow, .term-actions #term-locate { display: inline-flex; align-items: center; gap: 4px; }

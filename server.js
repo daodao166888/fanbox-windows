@@ -808,22 +808,75 @@ async function diskUsage(p) {
 }
 
 // 压缩包内容清单：全用系统自带工具（unzip / bsdtar / gzip），保持零依赖
+// 直接读 zip 中央目录拿文件名：按「通用位标记 bit 11 = UTF-8」决定编码，没设就按 GBK 解（中文名才不乱码）。
+// 系统 unzip/bsdtar 会先把字节转码、丢失原始编码，没法事后挽救，所以自己解。zip64/异常结构返回 null 交回退。
+async function zipNames(file, MAX) {
+  let fd;
+  try {
+    fd = await fsp.open(file, 'r');
+    const { size } = await fd.stat();
+    const tailLen = Math.min(size, 65557); // EOCD 22 字节 + 最多 65535 注释
+    const tail = Buffer.alloc(tailLen);
+    await fd.read(tail, 0, tailLen, size - tailLen);
+    let eocd = -1;
+    for (let i = tail.length - 22; i >= 0; i--) { if (tail.readUInt32LE(i) === 0x06054b50) { eocd = i; break; } }
+    if (eocd < 0) return null;
+    const cdCount = tail.readUInt16LE(eocd + 10);
+    const cdSize = tail.readUInt32LE(eocd + 12);
+    const cdOffset = tail.readUInt32LE(eocd + 16);
+    if (cdOffset === 0xffffffff || cdSize === 0xffffffff) return null; // zip64，超出本简单解析
+    const cd = Buffer.alloc(cdSize);
+    await fd.read(cd, 0, cdSize, cdOffset);
+    const gbk = new TextDecoder('gbk');
+    const out = [];
+    let p = 0;
+    for (let i = 0; i < cdCount && p + 46 <= cd.length; i++) {
+      if (cd.readUInt32LE(p) !== 0x02014b50) break; // central file header 签名
+      const flag = cd.readUInt16LE(p + 8);
+      const usize = cd.readUInt32LE(p + 24);
+      const nameLen = cd.readUInt16LE(p + 28);
+      const extraLen = cd.readUInt16LE(p + 30);
+      const commentLen = cd.readUInt16LE(p + 32);
+      const nameBuf = cd.subarray(p + 46, p + 46 + nameLen);
+      let nm;
+      if (flag & 0x800) nm = nameBuf.toString('utf8');
+      else { try { nm = gbk.decode(nameBuf); } catch { nm = nameBuf.toString('utf8'); } }
+      out.push({ name: nm, size: usize });
+      p += 46 + nameLen + extraLen + commentLen;
+      if (out.length > MAX) break;
+    }
+    return out;
+  } catch { return null; } // 解析失败一律交给 unzip 兜底
+  finally { if (fd) await fd.close().catch(() => {}); }
+}
+
 async function archiveList(p) {
   const file = resolvePath(p);
   try { await fsp.stat(file); } catch { return { ok: false, error: '文件不存在' }; }
   const name = path.basename(file).toLowerCase();
+  // 压缩包里的中文名常是 GBK/CP936 且没设 UTF-8 标志位，按 UTF-8 读会乱码：
+  // 拿原始字节，先严格按 UTF-8 解，失败（多半是 GBK 中文名）再回退 GBK。
+  const decodeMaybeGbk = (buf) => {
+    try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { try { return new TextDecoder('gbk').decode(buf); } catch { return buf.toString('latin1'); } }
+  };
   const run = (cmd, args) => new Promise((resolve, reject) => {
-    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    execFile(cmd, args, { timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: 'buffer' }, (err, stdout) => (err ? reject(err) : resolve(decodeMaybeGbk(stdout))));
   });
   const MAX = 800;
   const entries = [];
   try {
     if (/\.(zip|jar)$/.test(name)) {
-      const out = await run('unzip', ['-l', '--', file]);
-      for (const line of out.split('\n')) {
-        const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
-        if (m) entries.push({ name: m[2], size: Number(m[1]) });
-        if (entries.length > MAX) break;
+      const parsed = await zipNames(file, MAX); // 自读中央目录，中文名按 GBK/UTF-8 正确解（unzip 会乱码）
+      if (parsed) {
+        entries.push(...parsed);
+      } else { // zip64 / 异常结构本解析器够不着：回退 unzip（名字可能乱码，但至少列得出）
+        const out = await run('unzip', ['-l', '--', file]);
+        for (const line of out.split('\n')) {
+          const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
+          if (m) entries.push({ name: m[2], size: Number(m[1]) });
+          if (entries.length > MAX) break;
+        }
       }
     } else if (/\.(tar|tgz|tbz2?|txz)$/.test(name) || /\.tar\.(gz|bz2|xz|zst)$/.test(name)) {
       const out = await run('tar', ['-tf', file]); // bsdtar 自动识别压缩格式
@@ -1232,6 +1285,14 @@ async function serveHtmlPreview(req, res, filePath) {
   img, video { max-width: 100%; height: auto; }
 </style>`;
     const measureScript = '<script data-fanbox-measure>(function(){var l=0;function r(){var w=Math.max(document.documentElement.scrollWidth,document.body?document.body.scrollWidth:0);if(w&&w!==l){l=w;try{parent.postMessage({fanboxPreviewWidth:w},"*")}catch(e){}}}addEventListener("load",function(){r();setTimeout(r,300)});addEventListener("resize",r)})()</script>';
+    // 本地图片引用兜底：不同 agent 写 html 引图方式各异，http 预览（沙箱 iframe）里有两类必裂——
+    //   ① file:// 绝对 URL（http 页面禁加载 file://）；② /Users 这种裸绝对路径（解析到源站根）。
+    // 策略分两层，确保「修问题不引入新问题」：
+    //   · 主动改写：只碰 file://（http 预览里永远加载不了，改成 /fs 镜像只会帮忙、不会误伤任何能用的引用）；
+    //   · 失败兜底：其余绝对路径只在「已加载失败」时才重写到 /fs 再试一次（对本来能加载的引用零影响 → 结构性零回归）。
+    //   · 相对路径走 /fs/<目录>/ 本就正常，失败多半是文件真没了，不强行兜底。
+    // 未覆盖（注释在此说清，别让后人误以为全兜住）：<style> 块/外部 css 里的 file:// 背景图、srcset、加载后 JS 动态插入的元素。
+    const localImgScript = '<script data-fanbox-localimg>(function(){var FS="/fs";function f2fs(u){return (u&&u.slice(0,7)==="file://")?FS+u.slice(7):null;}function fix(el){if(!el.getAttribute)return;["src","href","poster"].forEach(function(a){var v=el.getAttribute(a),n=f2fs(v);if(n)el.setAttribute(a,n);});var st=el.getAttribute("style");if(st&&st.indexOf("file://")>-1)el.setAttribute("style",st.split("file://").join(FS));}function sweep(){document.querySelectorAll("[src],[href],[poster],[style]").forEach(fix);}sweep();document.addEventListener("DOMContentLoaded",sweep);document.addEventListener("error",function(e){var el=e.target;if(!el||!el.getAttribute||el.getAttribute("data-fs-tried"))return;var attr=el.tagName==="LINK"?"href":"src",v=el.getAttribute(attr);if(!v||v.charAt(0)!=="/"||v.slice(0,4)==="/fs/")return;if(/^(https?:|data:|blob:)/.test(v))return;el.setAttribute("data-fs-tried","1");el.setAttribute(attr,FS+v);},true);})()</script>';
     function injectHead(tag) {
       const headClose = html.match(/<\/head>/i);
       const headOpen = html.match(/<head[^>]*>/i);
@@ -1257,6 +1318,9 @@ async function serveHtmlPreview(req, res, filePath) {
     }
     if (!html.includes('data-fanbox-measure')) {
       injectHead(measureScript);
+    }
+    if (!html.includes('data-fanbox-localimg')) {
+      injectHead(localImgScript);
     }
     const buf = Buffer.from(html, 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': buf.length });

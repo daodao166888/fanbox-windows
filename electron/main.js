@@ -5,7 +5,7 @@
  * 复用零依赖后端 server.js（文件能力），叠加 node-pty 内嵌终端，
  * 让 TUI coding agent（Claude Code / Codex / Aider…）在界面里直接跑起来。
  */
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, session } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -88,6 +88,9 @@ app.whenReady().then(() => {
     try { app.dock.setIcon(nativeImage.createFromPath(path.join(__dirname, '..', 'build', 'icon.png'))); } catch { /* */ }
   }
   app.setName('FanBox');
+  // 后端跑在 localhost，访问它永不该走代理。个别环境（clash 强制系统代理、企业 PAC 把 loopback 也代理）
+  // 会把本地请求拦成 502 → 整个界面白屏。给 loopback 显式加旁路；其余（如查更新走 GitHub）仍按系统代理，互不影响。
+  session.defaultSession.setProxy({ mode: 'system', proxyBypassRules: 'localhost;127.0.0.1;[::1]' }).catch(() => { /* 设置失败就退回默认行为，不影响启动 */ });
   buildMenu();
   createWindow();
   startShotWatch();
@@ -221,6 +224,12 @@ ipcMain.handle('win:focus', () => {
   win.focus();
 });
 
+// 预览全屏时藏掉左上角红黄绿系统按钮——它和右侧自家关闭图标太像，容易让人误点
+ipcMain.handle('win:traffic', (e, { show }) => {
+  if (!win || win.isDestroyed() || typeof win.setWindowButtonVisibility !== 'function') return;
+  win.setWindowButtonVisibility(!!show);
+});
+
 // 界面语言：用户手动选过的存在 ~/.fanbox/config.json（渲染层切换时写入），没选过跟随系统
 function uiLang() {
   try {
@@ -288,12 +297,16 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows }) => {
   if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
   const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh');
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
+  // login shell（-l）：GUI 启动的进程只继承精简 PATH，不读 .zprofile/.zlogin，
+  // 用户在那里配的 Homebrew/nvm/npm 全局路径（claude 等）就丢了 → 「普通终端能找到、fanbox 找不到」。
+  // 走 login shell 把这些路径带进来。Windows 的 powershell 无此机制，保持空参数。
+  const shellArgs = process.platform === 'win32' ? [] : ['-l'];
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
   const env = { ...process.env, TERM: 'xterm-256color', FANBOX: '1' };
   if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
   let p;
   try {
-    p = pty.spawn(shellPath, [], {
+    p = pty.spawn(shellPath, shellArgs, {
       name: 'xterm-256color',
       cols: cols || 80,
       rows: rows || 24,
@@ -315,13 +328,13 @@ ipcMain.handle('clip:image', (e, { path: p }) => {
   catch (err) { return { ok: false, error: err.message }; }
 });
 ipcMain.handle('clip:file', (e, { path: p }) => new Promise((resolve) => {
-  const { execFile, exec } = require('child_process');
+  const { execFile } = require('child_process');
   if (process.platform === 'win32') {
-    // Windows: 用 PowerShell 复制文件到剪贴板
-    const ps = p.replace(/'/g, "''");
-    exec(`powershell -NoProfile -Command "Set-Clipboard -Path '${ps}'"`, (err) => resolve({ ok: !err, error: err && err.message }));
+    // Windows：用 PowerShell 把文件放进剪贴板（资源管理器可粘贴）
+    const ps = `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Clipboard]::SetFileDropList((New-Object System.Collections.Specialized.StringCollection)); (([System.Windows.Forms.Clipboard]::GetFileDropList()).Add('${p.replace(/'/g, "''")}'))`;
+    execFile('powershell', ['-NoProfile', '-Command', ps], (err) => resolve({ ok: !err, error: err && err.message }));
   } else {
-    // macOS: argv 传路径，避免拼进 AppleScript 字面量被注入
+    // macOS：argv 传路径，避免拼进 AppleScript 字面量被注入
     execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
   }
 }));
@@ -391,20 +404,11 @@ ipcMain.handle('pty:cwd', (e, { id }) => new Promise((resolve) => {
   const p = terminals.get(id);
   if (!p || !p.pid) return resolve({ ok: false });
   const { exec } = require('child_process');
-  if (process.platform === 'win32') {
-    // Windows: 用 wmic 获取进程工作目录
-    exec(`wmic process where ProcessId=${p.pid} get CommandLine /format:list`, { encoding: 'utf8' }, (err, stdout) => {
-      if (err) return resolve({ ok: false });
-      // 无法直接获取 cwd，返回 home 作为兜底
-      resolve({ ok: false });
-    });
-  } else {
-    exec(`lsof -a -p ${p.pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' } }, (err, stdout) => {
-      if (err) return resolve({ ok: false });
-      const line = stdout.split('\n').find((l) => l.startsWith('n'));
-      resolve(line ? { ok: true, cwd: decodeLsofPath(line.slice(1)) } : { ok: false });
-    });
-  }
+  exec(`lsof -a -p ${p.pid} -d cwd -Fn`, { env: { ...process.env, LC_ALL: 'en_US.UTF-8' } }, (err, stdout) => {
+    if (err) return resolve({ ok: false });
+    const line = stdout.split('\n').find((l) => l.startsWith('n'));
+    resolve(line ? { ok: true, cwd: decodeLsofPath(line.slice(1)) } : { ok: false });
+  });
 }));
 
 // 取终端前台进程名（node-pty 维护）：判断当前是裸 shell 还是正跑着 claude/codex 等程序

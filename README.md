@@ -1,19 +1,23 @@
 <div align="center">
 
-# 📦 FanBox Windows
+# 📦 FanBox
+
+<img src="assets/promo-banner.jpg" alt="FanBox · Coding Agent 的驾驶舱" width="100%">
+
+<br><br>
 
 > *"AI 帮你一个下午起十个项目，然后它们就再也找不到了。FanBox 帮你把它们找回来。"*
 > *"AI spins up ten projects in an afternoon. FanBox helps you find them again."*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-blue?logo=windows)]()
+[![Release](https://img.shields.io/github/v/release/alchaincyf/fanbox?label=Release&color=blue)](https://github.com/alchaincyf/fanbox/releases/latest)
+[![Platform](https://img.shields.io/badge/macOS-Apple%20Silicon-black?logo=apple)](https://github.com/alchaincyf/fanbox/releases/latest)
 [![Runtime](https://img.shields.io/badge/Runtime-no--build-blueviolet)](#architecture)
-[![Based on](https://img.shields.io/badge/Based%20on-alchaincyf%2Ffanbox-orange)](https://github.com/alchaincyf/fanbox)
 
 <br>
 
-**vibe coding 的驾驶舱：左边文件，右边/下边终端，中间看清每一次改动。**<br>
-**The cockpit for vibe coding: browse files on the left, command agents on the right, watch every change in between.**
+**FanBox：Coding Agent 的驾驶舱。指挥 Claude Code、Codex 在本地干活，看清它碰过的每个文件、改过的每一行，随时接手。**<br>
+**FanBox — the cockpit for coding agents: command Claude Code or Codex, see every file and line they change, and take over anytime.**
 
 <br>
 
@@ -25,11 +29,7 @@ Every time the agent writes a file, its card lights up — *find files → run a
 
 <br>
 
-**🆕 Windows 桌面版** — 基于花叔的 FanBox，增加了完整 Windows 支持
-
-<br>
-
-[Screenshots / 截图](#three-skins) · [Features / 功能](#what-it-does) · [Install / 安装](#install) · [Credits / 致谢](#credits)
+[⬇ 下载 dmg / Download dmg](https://github.com/alchaincyf/fanbox/releases/latest) · [Screenshots / 截图](#three-skins) · [Features / 功能](#what-it-does) · [Install / 安装](#install) · [Credits / 致谢](#credits)
 
 </div>
 
@@ -144,43 +144,17 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 <a id="install"></a>
 ## Install · 安装
 
-### Windows 桌面版（推荐）/ Windows Desktop (recommended)
+### 桌面版（推荐）/ Desktop (recommended)
 
-```bash
-# 克隆仓库
-git clone https://github.com/daodao166888/fanbox-windows.git
-cd fanbox-windows
+从 [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) 下载最新 `.dmg`，拖进「应用程序」即可。Apple Silicon (arm64) 原生。
 
-# 安装依赖
-npm install
+Download the latest `.dmg` from [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) and drag it into Applications. Native Apple Silicon (arm64).
 
-# 启动桌面版
-npx electron .
-```
-
-或双击 `启动FanBox桌面版.bat`
-
-### 创建桌面快捷方式 / Create Desktop Shortcut
-
-运行以下 PowerShell 命令，会在桌面生成带图标的快捷方式：
-
-```powershell
-$ws = New-Object -ComObject WScript.Shell
-$sc = $ws.CreateShortcut("$env:USERPROFILE\Desktop\FanBox.lnk")
-$sc.TargetPath = "$PWD\node_modules\electron\dist\electron.exe"
-$sc.Arguments = "."
-$sc.WorkingDirectory = "$PWD"
-$sc.IconLocation = "$PWD\build\icon.ico,0"
-$sc.Save()
-```
-
-### 打包成安装包 / Build Installer
-
-```bash
-npm run dist
-```
-
-生成的安装包在 `dist/` 目录。
+> 已用 Apple Development 证书签名 + hardened runtime。首次打开若提示「未验证的开发者」：**右键 → 打开 → 确认**即可。  
+> Signed with an Apple Development certificate + hardened runtime. If macOS warns about an unverified developer on first launch: **right-click → Open → confirm**.
+>
+> 应用内置**更新提醒**：检测到 GitHub 上有新 Release 时，右下角会弹一条提示引导下载，不强更、可对单个版本「不再提醒」。  
+> Built-in **update notifications**: when a new release lands on GitHub, a capsule appears at the bottom right. Never forced; individual versions can be muted.
 
 ### 网页版（不打包，直接跑）/ Web (no packaging)
 
@@ -197,46 +171,19 @@ Open `http://localhost:4567`. Zero dependencies, zero build — clone and run. T
 ```bash
 npm install
 npm run app          # electron . 启动完整桌面版 / full desktop app
-npm run dist         # 打包安装包 / build installer (output in dist/)
+npm run dist         # 打包签名 .dmg（产物在 dist/，不入 git）/ build & sign the .dmg (output in dist/)
 ```
 
 > 打包遇到 Electron 下载被墙：`ELECTRON_MIRROR="https://registry.npmmirror.com/-/binary/electron/" npm run dist`
 
 ## Shortcuts · 快捷键
 
-| 操作 / Action | macOS | Windows |
-|---|---|---|
-| 全局搜索 / Global search | `⌘K` | `Ctrl+K` |
-| 用编辑器打开 / Open in editor | `⌘↵` | `Ctrl+↵` |
-| 折叠侧栏 / Toggle sidebar | `⌘B` | `Ctrl+B` |
-| 后退 / Back | `⌘[` | `Ctrl+[` |
-| 保存 / Save | `⌘S` | `Ctrl+S` |
-| 当前目录筛选 / Filter current folder | `/` | `/` |
-| 打开/预览 / Open/preview | `↵` | `↵` |
-| 结果上下选择 / Navigate results | `↑` `↓` | `↑` `↓` |
-| 关闭 / Close | `Esc` | `Esc` |
-
-<a id="windows-changes"></a>
-## Windows 版改动说明
-
-本项目基于 [alchaincyf/fanbox](https://github.com/alchaincyf/fanbox) v1.9.1，增加了 Windows 桌面版支持。
-
-### 主要改动
-
-| 文件 | 改动内容 |
-|------|---------|
-| `electron/main.js` | Windows 标题栏适配、截图目录检测、剪贴板文件复制、终端 cwd 获取 |
-| `public/app.js` | 添加 `modKey()` 函数，快捷键符号自动适配（macOS→⌘，Windows→Ctrl）、平台 CSS 类 |
-| `public/style.css` | 交通灯 padding 仅 macOS 生效、Windows 用不透明侧栏背景、拖拽区域优化 |
-| `package.json` | 添加 Windows NSIS 安装包构建配置 |
-| `build/icon.ico` | 新增 Windows 图标文件 |
-
-### 技术细节
-
-- **标题栏**：使用 `titleBarStyle: 'hidden'` + `titleBarOverlay` 实现自定义标题栏
-- **截图监听**：Windows 监听 `~/Pictures/Screenshots` 目录
-- **剪贴板**：使用 PowerShell 的 `Set-Clipboard -Path` 实现文件复制
-- **快捷键**：根据平台动态显示 `Ctrl` 或 `⌘`
+| 操作 / Action | 键 / Key | 操作 / Action | 键 / Key |
+|---|---|---|---|
+| 全局搜索 / Global search | `⌘K` | 用编辑器打开 / Open in editor | `⌘↵` |
+| 折叠侧栏 / Toggle sidebar | `⌘B` | 后退 / Back | `⌘[` |
+| 当前目录筛选 / Filter current folder | `/` | 打开/预览 / Open/preview | `↵` |
+| 结果上下选择 / Navigate results | `↑` `↓` | 关闭 / Close | `Esc` |
 
 <a id="privacy"></a>
 ## Privacy & security · 隐私与安全
@@ -329,23 +276,24 @@ fanbox/
 
 ## Author · 关于作者
 
-**daodao166888** — IP打造导师，AI赋能个人品牌实践者。文科生用 AI 参与开源，让好工具触达更多人。
+**花叔 Huashu**——AI Native Coder，独立开发者。代表作：小猫补光灯（App Store 付费榜 Top1）。
+
+**Huashu (花叔)** — AI Native Coder, indie developer. Known for Cat Light (App Store paid chart Top 1).
 
 | 平台 / Platform | 链接 / Link |
 |------|------|
-| 𝕏  Twitter | [@daodao166888](https://x.com/daodao166888) |
-| 💬  公众号 / WeChat | 刀刀创业笔记 |
-| 📱  微信 / WeChat | omg88511（备注：GitHub） |
-| 🐙  GitHub | [daodao166888](https://github.com/daodao166888) |
+| 🌐 官网 / Web | [bookai.top](https://bookai.top) · [huasheng.ai](https://www.huasheng.ai) |
+| 𝕏 Twitter | [@AlchainHust](https://x.com/AlchainHust) |
+| 📺 B站 / Bilibili | [花叔](https://space.bilibili.com/14097567) |
+| 📕 小红书 / Xiaohongshu | [花叔](https://www.xiaohongshu.com/user/profile/5abc6f17e8ac2b109179dfdf) |
+| 💬 公众号 / WeChat | 微信搜「花叔」 / Search "花叔" |
 
-### 致谢原作者
+更多 AI 造物：
 
-本项目基于 **花叔 Huashu** 的 [FanBox](https://github.com/alchaincyf/fanbox) 开发。
+More AI creations:
 
-**花叔** — AI Native Coder，独立开发者。代表作：小猫补光灯（App Store 付费榜 Top1）。
-
-- 🐙 GitHub: [@alchaincyf](https://github.com/alchaincyf)
-- 𝕏 Twitter: [@AlchainHust](https://x.com/AlchainHust)
+- [女娲.skill](https://github.com/alchaincyf/nuwa-skill)（蒸馏任何人的思维方式 / distill anyone's way of thinking）
+- [huashu-design](https://github.com/alchaincyf/huashu-design)（一句话拿回一份能交付的设计 / a deliverable design from one sentence）
 
 ---
 
@@ -354,6 +302,6 @@ fanbox/
 **Finder** 帮你管理文件。**IDE** 帮你写代码。**FanBox** 帮你看清 AI 在你机器上干了什么。<br>
 **Finder** manages your files. **IDEs** write your code. **FanBox** shows you what AI did on your machine.<br><br>
 
-MIT License © [花叔 Huashu](https://github.com/alchaincyf) · Windows 适配 by [daodao166888](https://github.com/daodao166888)
+MIT License © [花叔 Huashu](https://github.com/alchaincyf)
 
 </div>

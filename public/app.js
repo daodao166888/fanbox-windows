@@ -4,11 +4,6 @@
 const $ = (s) => document.querySelector(s);
 const api = (p) => fetch(p).then((r) => r.json());
 const apiPost = (p, body) => fetch(p, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then((r) => r.json());
-// 平台感知的快捷键符号：macOS 用 ⌘，Windows/Linux 用 Ctrl
-function modKey() {
-  const p = (window.fanboxEnv && window.fanboxEnv.platform) || navigator.platform || '';
-  return /mac|darwin/i.test(p) ? '⌘' : 'Ctrl';
-}
 
 // ---------- SVG 图标系统（替代 emoji，统一矢量审美） ----------
 const SVG = {
@@ -41,6 +36,8 @@ const SVG = {
   eye: '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
   maximize: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
   minimize: '<polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/>',
+  undo: '<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
+  redo: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
   // 高辨识度文件类型图标
   md: '<rect x="2.5" y="5" width="19" height="14" rx="2"/><path d="M6 15.5V9l3 3 3-3v6.5"/><path d="M17 9v4.5"/><path d="M14.8 12.5L17 15l2.2-2.5"/>',
   html: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><polyline points="9.3 12.5 7.5 14.5 9.3 16.5"/><polyline points="14.7 12.5 16.5 14.5 14.7 16.5"/>',
@@ -187,16 +184,16 @@ window.__svgVideo = richIcon({ name: '_.mp4', kind: 'video' }, 40);
 
 const state = {
   cwd: null, home: null, platform: 'darwin', sep: '/',
-  theme: localStorage.getItem('fb_theme') || 'terminal',
+  theme: localStorage.getItem('fb_theme') || 'warm',
   entries: [], project: null, history: [],
   view: localStorage.getItem('fb_view') || 'grid',
-  gridSize: localStorage.getItem('fb_gridsize') || 'md',
+  gridSize: localStorage.getItem('fb_gridsize') || 'sm',
   sort: localStorage.getItem('fb_sort') || 'name',
   showHidden: localStorage.getItem('fb_hidden') === '1',
   filter: '', selected: null, cursor: -1, cols: 1, visible: [],
   favorites: [], recentOpened: [], recentMode: false, skillsMode: false,
-  previewW: Number(localStorage.getItem('fb_preview_w')) || 480,
-  previewH: Number(localStorage.getItem('fb_preview_h')) || 340,
+  previewW: Number(localStorage.getItem('fb_preview_w')) || 0, // 0 = 用户还没拖过，走 1:2 比例默认
+  previewH: Number(localStorage.getItem('fb_preview_h')) || 0,
   sidebarCollapsed: localStorage.getItem('fb_sidebar_collapsed') === '1',
   sidebarW: Math.min(420, Math.max(190, Number(localStorage.getItem('fb_sidebar_w')) || 248)),
   muted: localStorage.getItem('fb_muted') === '1', // WOW4 提示音静音开关
@@ -243,6 +240,7 @@ function escapeHtml(s) {
 // 否则会静默丢掉改动。dirtyCheck 在进入编辑器时挂上，保存/确认离开后清空。
 let dirtyCheck = null; // () => boolean，true=有未保存改动；null=当前没有编辑器
 let autosaveFlush = null; // 自动保存编辑器挂上：离开前把未落盘的改动写掉，不弹「放弃？」
+let edStatusTimer = null; // 代码编辑器「xx 之前已保存」每秒刷新的定时器；编辑器关掉时自清
 async function guardDirty() {
   if (autosaveFlush) {
     const f = autosaveFlush;
@@ -262,7 +260,7 @@ const isMdName = (n) => /\.(md|markdown)$/i.test(String(n || ''));
 // ---------- 导航 ----------
 async function navigate(p, pushHistory = true) {
   if (!await guardDirty()) return;
-  ensureFileAreaSize();
+  if (pushHistory && !follow.navving) restoreFileAreaIfHidden(); // 用户主动导航时，终端铺满/全铺就退出，让文件区回来
   try {
     const data = await api('/api/list?path=' + encodeURIComponent(p));
     if (data.error) { toast('无法打开：' + data.error, true); return; }
@@ -301,7 +299,6 @@ function goUp() { if (state.parent && state.parent !== state.cwd) navigate(state
 function render() {
   renderBreadcrumb();
   renderFiles();
-  $('#btn-back').disabled = !state.history.length;
 }
 function renderBreadcrumb() {
   const bc = $('#breadcrumb');
@@ -527,7 +524,16 @@ function onItemClick(e) {
   openPreview(e);
   recordRecent(e.path);
 }
-function onItemOpen(e) { if (e.isDir) navigate(e.path); else openWith(e.path, 'default'); }
+function onItemOpen(e) {
+  if (e.isDir) return navigate(e.path);
+  // 文本/代码、图片、视频双击 =「正经看这文件」→ 全屏预览；pdf/压缩包/二进制仍交系统默认 App 打开。
+  // 单击已经预览过同一文件，这里只负责放大，避免重复加载编辑器。
+  const k = e.kind || kindFromName(e.name);
+  if (k === 'text' || k === 'image' || k === 'video') {
+    if (state.selected !== e.path) { applySelection(e.path); openPreview(e); recordRecent(e.path); }
+    setPreviewMax(true);
+  } else { openWith(e.path, 'default'); }
+}
 
 // ---------- 主区键盘导航 ----------
 function highlightCursor() {
@@ -577,8 +583,13 @@ async function openPreview(e) {
   } else if (k === 'pdf') {
     body.innerHTML = `<iframe class="iframe-preview" src="/api/raw?path=${encodeURIComponent(e.path)}"></iframe>`;
   } else if (k === 'text') {
-    if (isMdName(e.name)) return enterEditMode(e); // md 预览即编辑：打开就是所见即所得，自动保存
-    renderTextPreview(await api('/api/read?path=' + encodeURIComponent(e.path)));
+    // 代码/文本「预览即编辑」：像 md 一样默认进可编辑态，不用再点编辑按钮。
+    // html 例外（给人看的是渲染形态）、csv/tsv 例外（表格视图更有用）→ 仍走只读渲染。
+    if (isHtmlName(e.name) || /\.(csv|tsv)$/i.test(e.name)) {
+      renderTextPreview(await api('/api/read?path=' + encodeURIComponent(e.path)));
+    } else {
+      return enterEditMode(e); // md/代码/纯文本：打开即可编辑、自动保存守卫
+    }
   } else if (k === 'archive') {
     const d = await api('/api/archive?path=' + encodeURIComponent(e.path));
     if (!d.ok) {
@@ -642,10 +653,9 @@ function renderHtmlPreview(data, meta) {
   // 用 html-preview-host 把 meta、工具栏、iframe 包成 flex 列：
   // iframe 占满剩余高度，避免 100% 高度叠加兄弟元素导致父容器也出现滚动条，
   // 从而让 iframe 自己稳定处理页面内滚动。
+  // 头部不再放 meta/「查看源码」/「浏览器打开」：顶栏的编辑（笔）= 看源码、打开 = 浏览器打开，已经够了
   body.innerHTML =
     `<div class="html-preview-host">
-      ${meta}
-      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-browser" class="ghost-btn">${ic('globe', 'currentColor', 13)} 浏览器打开（看完整交互）</button></div>
       <div class="iframe-wrap"><iframe class="iframe-preview" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals" scrolling="yes" src="${fsUrl(data.path, data.mtime)}"></iframe></div>
     </div>`;
   // 桌面 Chromium 的 iframe 不认 viewport meta，定宽桌面页在窄预览框里只露左上角。
@@ -671,19 +681,6 @@ function renderHtmlPreview(data, meta) {
   const ro = new ResizeObserver(applyFit);
   ro.observe(wrap);
   renderHtmlPreview._cleanup = () => { window.removeEventListener('message', onMsg); ro.disconnect(); renderHtmlPreview._cleanup = null; };
-  let src = false;
-  $('#html-browser').onclick = () => openWith(data.path, 'default');
-  $('#html-toggle').onclick = () => {
-    src = !src;
-    if (src) {
-      if (renderHtmlPreview._cleanup) renderHtmlPreview._cleanup();
-      const pre = document.createElement('pre');
-      pre.innerHTML = `<code class="language-html">${escapeHtml(data.content || '')}</code>`;
-      wrap.replaceWith(pre);
-      if (window.hljs) pre.querySelectorAll('code').forEach((b) => { try { window.hljs.highlightElement(b); } catch {} });
-      $('#html-toggle').textContent = '渲染预览';
-    } else { renderHtmlPreview(data, meta); }
-  };
 }
 // 查看改动：HEAD 版本 vs 工作区当前内容，用 Monaco 只读 DiffEditor 并排渲染
 async function showDiff(e) {
@@ -864,7 +861,15 @@ function bindSidebarResizer() {
 function applyPreviewSize() {
   const pv = $('#preview');
   if (!pv || pv.classList.contains('hidden')) return;
-  pv.style.flexBasis = (term.dock === 'right' ? (state.previewH || 340) : state.previewW) + 'px';
+  const isRight = term.dock === 'right';
+  let basis = isRight ? state.previewH : state.previewW; // 0 = 还没手动拖过
+  if (!basis) { // 首次：文件列表:预览 = 1:2，预览占 2/3
+    const fm = $('#filemgmt');
+    const r = fm && fm.getBoundingClientRect();
+    const span = r ? (isRight ? r.height : r.width) : 0;
+    basis = span ? Math.round(span * 2 / 3) : (isRight ? 340 : 480);
+  }
+  pv.style.flexBasis = basis + 'px';
 }
 // 离散布局切换时短暂开启过渡（拖拽时不开，保证跟手）
 function animateLayout() {
@@ -873,59 +878,25 @@ function animateLayout() {
   clearTimeout(animateLayout._t);
   animateLayout._t = setTimeout(() => mb.classList.remove('lay-anim'), 280);
 }
-// 从终端路径/侧边栏等外部触发导航时，若文件区被压得过小或完全隐藏，自动恢复到一个能看内容的合理尺寸。
-// 只在当前尺寸不足时才调整，避免打扰用户已有的合理布局。
-function ensureFileAreaSize() {
-  // 只在用户主动导航时生效：启动首屏要尊重上次保存的布局，
-  // 文件跟随的自动 navigate 更不能把刻意压低的文件区弹开（否则又是一种「跟随失控」）
-  if (!ensureFileAreaSize.armed || follow.navving) return;
-  const mb = $('#main-body');
+// 极端态特例：只在「文件区被完全盖住」时出手——终端铺满 → 还原；拖成全铺 → 退出并把终端回到 1:2 默认。
+// 不做任何「最小尺寸」挤压，普通分栏比例一律不碰（这才是删掉 ensureFileAreaSize 之后要留的唯一兜底）。
+function restoreFileAreaIfHidden() {
   const panel = $('#terminal-panel');
-  if (!mb || !panel || panel.classList.contains('hidden')) return;
-  // 终端铺满时先退出铺满
-  if (term.maximized) term.toggleMax(false);
-  const rect = mb.getBoundingClientRect();
-  const isBottom = term.dock === 'bottom';
-  const FILE_AREA_MIN_H = 320; // 底部 dock 时文件区最小可视高度
-  const FILE_AREA_MIN_W = 480; // 右侧 dock 时文件区最小可视宽度
-  const TERM_MIN_H = 200;      // 终端最小高度
-  const TERM_MIN_W = 280;      // 终端最小宽度
-  const RESIZER = 6;
-  const available = isBottom ? rect.height : rect.width;
-  const desiredFile = isBottom ? FILE_AREA_MIN_H : FILE_AREA_MIN_W;
-  const minTerm = isBottom ? TERM_MIN_H : TERM_MIN_W;
-
-  // 文件区被完全隐藏：退出 squeezed 并重新分配空间
-  if (mb.classList.contains('fm-squeezed')) {
+  if (!panel || panel.classList.contains('hidden')) return;
+  if (term.maximized) term.toggleMax(false); // 铺满：还原即可，终端保留原尺寸
+  const mb = $('#main-body');
+  if (mb && mb.classList.contains('fm-squeezed')) { // 拖成全铺：文件区被压没，退出并给终端一个 2/3 的默认尺寸
     mb.classList.remove('fm-squeezed');
     localStorage.setItem('fb_term_squeeze', '0');
-    const termSize = Math.max(minTerm, available - desiredFile - RESIZER);
-    if (isBottom) {
-      panel.style.height = termSize + 'px';
-      localStorage.setItem('fb_term_h', termSize);
+    const r = mb.getBoundingClientRect();
+    if (term.dock === 'bottom') {
+      const h = r.height ? Math.round(r.height * 2 / 3) : 280;
+      panel.style.height = h + 'px'; localStorage.setItem('fb_term_h', h);
     } else {
-      panel.style.width = termSize + 'px';
-      localStorage.setItem('fb_term_w', termSize);
+      const w = r.width ? Math.round(r.width * 2 / 3) : 480;
+      panel.style.width = w + 'px'; localStorage.setItem('fb_term_w', w);
     }
-    animateLayout();
-    term.fitActive();
-    return;
-  }
-
-  // 文件区可见但尺寸不足：压缩终端给文件区腾空间
-  const fileRect = $('#filemgmt').getBoundingClientRect();
-  const currentFile = isBottom ? fileRect.height : fileRect.width;
-  if (currentFile < desiredFile) {
-    const termSize = Math.max(minTerm, available - desiredFile - RESIZER);
-    if (isBottom) {
-      panel.style.height = termSize + 'px';
-      localStorage.setItem('fb_term_h', termSize);
-    } else {
-      panel.style.width = termSize + 'px';
-      localStorage.setItem('fb_term_w', termSize);
-    }
-    animateLayout();
-    term.fitActive();
+    animateLayout(); term.fitActive();
   }
 }
 function showPreviewPanel() {
@@ -940,16 +911,35 @@ let previewMax = false;
 function setPreviewMax(on) {
   previewMax = on === undefined ? !previewMax : !!on;
   $('#preview').classList.toggle('is-max', previewMax);
+  document.documentElement.classList.toggle('preview-maxed', previewMax); // 全屏期间关掉顶栏 drag 区，否则它会吞预览按钮的点击
+  // 全屏时藏掉左上角红黄绿系统按钮（和右侧自家关闭图标太像），退出再显回来
+  try { window.fanboxWin?.trafficLights(!previewMax); } catch { /* 浏览器版无此桥 */ }
   const b = $('#preview-maxbtn');
   if (b) { b.innerHTML = ic(previewMax ? 'minimize' : 'maximize', 'currentColor', 15); b.dataset.tip = previewMax ? '退出全屏' : '全屏放大'; }
 }
 function applyPreviewWidth() { applyPreviewSize(); } // 兼容旧调用名
 function toggleSidebar(force) {
+  // 关/开侧栏前记下终端占主区的比例（仅左右分栏时）：腾出/收回的宽度按比例分给「文件区+预览」和终端，
+  // 而不是全甩给左侧文件区
+  const panel = $('#terminal-panel');
+  const scaleTerm = panel && !panel.classList.contains('hidden') && term.dock === 'right' && !term.maximized;
+  let frac = 0, oldMw = 0;
+  if (scaleTerm) {
+    oldMw = $('#main-body').getBoundingClientRect().width;
+    if (oldMw > 0) frac = panel.getBoundingClientRect().width / oldMw;
+  }
   state.sidebarCollapsed = force === undefined ? !state.sidebarCollapsed : force;
   localStorage.setItem('fb_sidebar_collapsed', state.sidebarCollapsed ? '1' : '0');
   $('#app').classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
   $('#btn-sidebar')?.classList.toggle('on', state.sidebarCollapsed);
   applyLayout();
+  if (scaleTerm && frac > 0) {
+    const newMw = oldMw + (state.sidebarCollapsed ? state.sidebarW : -state.sidebarW); // 主区列 ±侧栏宽
+    const tw = Math.max(280, Math.min(newMw - 480, Math.round(newMw * frac))); // 终端/文件区各留最小宽
+    panel.style.width = tw + 'px';
+    localStorage.setItem('fb_term_w', tw);
+    term.fitActive();
+  }
 }
 
 // ---------- 图片基础编辑（canvas：标注/打码/转格式/缩放/压缩，原生保存）----------
@@ -1019,7 +1009,7 @@ function buildImageEditor(e, img) {
       </div>
       <input type="color" id="ie-color" value="#ff3b30" title="颜色">
       <span class="ie-thick" title="粗细"><input type="range" id="ie-size" min="1" max="60" value="5"><i id="ie-dot"></i></span>
-      <button id="ie-undo" class="ghost-btn" title="撤销 ${modKey()}Z">撤销</button>
+      <button id="ie-undo" class="ghost-btn" title="撤销 ⌘Z">撤销</button>
     </div>
     <div class="imgedit-canvas-wrap"><canvas id="ie-canvas"></canvas></div>
     <div class="imgedit-export">
@@ -1201,42 +1191,60 @@ async function enterEditMode(e) {
   const data = await api('/api/read?path=' + encodeURIComponent(e.path));
   if (data.tooLarge) {
     toast('文件太大，暂不支持原地编辑', true);
-    if (isMdName(e.name)) { renderTextPreview(data); return; } // md 预览即编辑，回 openPreview 会循环
-    openPreview(e); return;
+    renderTextPreview(data); return; // 统一回退只读渲染；代码也默认进编辑态了，回 openPreview 会死循环
   }
   if (isMdName(e.name)) return mdEditor(e, data); // md：所见即所得 + 自动保存 + 源码切换
   const ex = (data.ext || '').toLowerCase();
   let baseMtime = data.mtime; // 并发覆盖保护基准
-  let getValue, baseline = ''; // baseline：编辑器内的「已保存基准」，用于未保存守卫
-  const leave = async () => {
-    if (getValue && getValue() !== baseline) {
-      const ok = await confirmDialog(`有未保存的改动，放弃并退出？（保存请点取消后按 ${modKey()}S）`);
-      if (!ok) return;
-    }
-    dirtyCheck = null; // 已在此确认过，避免 openPreview 的守卫再问一次
-    mona.disposeIfAny(); crepe.disposeIfAny(); openPreview(e);
+  let getValue = null, baseline = '';
+  let timer = null, paused = false, saving = false, statusHeld = false, lastSavedAt = 0;
+  let chain = Promise.resolve(); // 写盘串行化：防抖到点的保存和离开时的 flush 不互相踩
+  const setStatus = (t) => { const el = $('#ed-status'); if (el) el.textContent = t; };
+  // 「xx 之前已保存」：1 分钟内显秒、1 小时内显「分:秒」、再久直接给最后保存的钟点
+  const savedAgo = (ts) => {
+    const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (sec < 60) return `${sec}秒之前已保存`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}秒之前已保存`;
+    const d = new Date(ts), p = (x) => String(x).padStart(2, '0');
+    return `最后保存于 ${p(d.getHours())}:${p(d.getMinutes())}`;
   };
-  const save = async (force) => {
+  const renderSaved = () => {
+    const el = $('#ed-status');
+    if (!el) { if (edStatusTimer) { clearInterval(edStatusTimer); edStatusTimer = null; } return; } // 编辑器已关：自清
+    if (saving || statusHeld || !lastSavedAt) return;
+    el.textContent = savedAgo(lastSavedAt);
+  };
+  const doSave = async (force) => {
+    if (!getValue || paused) return;
     const content = getValue();
+    if (content === baseline) return;
+    saving = true; setStatus('保存中…');
     const r = await apiPost('/api/write', { path: e.path, content, expectedMtime: force ? 0 : baseMtime });
     if (r.conflict) {
+      paused = true;
       const ok = await confirmDialog('文件已被外部修改（可能是 agent 改的）。覆盖会丢掉外部改动，确定覆盖？');
-      if (ok) return save(true);
+      paused = false;
+      if (ok) return doSave(true);
+      saving = false; statusHeld = true; setStatus('未保存：文件被外部修改');
       return;
     }
-    if (r.ok === false || r.error) { toast('保存失败：' + (r.error || ''), true); return; }
-    baseMtime = r.mtime; baseline = content; // 更新已保存基准
-    toast('已保存');
-    refresh(); // 后台刷新文件区，不打断编辑（⌘S 留在编辑器里）
+    if (r.ok === false || r.error) { saving = false; statusHeld = true; setStatus('保存失败'); toast('保存失败：' + (r.error || ''), true); return; }
+    baseMtime = r.mtime; baseline = content;
+    lastSavedAt = Date.now(); saving = false; statusHeld = false; renderSaved();
   };
-  // 挂上未保存守卫：离开编辑器（切文件/跳目录/关预览）前比对当前值与已保存基准
-  dirtyCheck = () => !!getValue && getValue() !== baseline;
+  const queue = () => { clearTimeout(timer); timer = setTimeout(() => { chain = chain.then(() => doSave()); }, 800); };
+  const flush = () => { clearTimeout(timer); chain = chain.then(() => doSave()); return chain; };
+  autosaveFlush = flush; // 离开（切文件/跳目录/关预览）时 guardDirty 把残余改动写掉，不弹确认框
+  dirtyCheck = null;
+  // 代码/文本编辑器顶部：撤销 / 重做两个小图标（按可用性灰显）+ 自动保存状态（和 md 一致，不再有「保存 / 完成」）
+  const editorBar =
+    `<div class="editor-bar"><button id="ed-undo" class="ghost-btn" title="撤销 ⌘Z" disabled>${ic('undo', 'currentColor', 15)}</button>` +
+    `<button id="ed-redo" class="ghost-btn" title="重做 ⇧⌘Z" disabled>${ic('redo', 'currentColor', 15)}</button>` +
+    `<span id="ed-status" class="editor-hint">自动保存</span></div>`;
 
   if (await mona.load()) {
     const monaco = window.monaco;
-    body.innerHTML =
-      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">${modKey()}S 保存 · ${modKey()}F 查找 · Esc 完成</span></div>` +
-      `<div id="ed-host" class="mona-host"></div>`;
+    body.innerHTML = editorBar + `<div id="ed-host" class="mona-host"></div>`;
     const ed = monaco.editor.create($('#ed-host'), {
       value: data.content || '', language: mona.lang(ex), theme: mona.themeName(),
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
@@ -1246,27 +1254,43 @@ async function enterEditMode(e) {
     });
     mona.editor = ed;
     getValue = () => ed.getValue();
-    ed.addCommand(monaco.KeyMod.CmdCtrl | monaco.KeyCode.KeyS, () => save());
-    // Esc 退出编辑，但查找/建议浮窗打开时让 Esc 先关浮窗
-    ed.addCommand(monaco.KeyCode.Escape, () => leave(), '!findWidgetVisible && !suggestWidgetVisible');
+    const model = ed.getModel();
+    const undoBtn = $('#ed-undo'), redoBtn = $('#ed-redo');
+    const setUR = (u, r) => { undoBtn.disabled = !u; redoBtn.disabled = !r; };
+    // 用 alternativeVersionId 跟踪撤销/重做栈：没改动时俩都灰，撤销后才放开重做，回到栈顶则重做又变灰
+    const initialVersion = model.getAlternativeVersionId();
+    let curVersion = initialVersion, topVersion = initialVersion;
+    ed.onDidChangeModelContent(() => {
+      queue();
+      const v = model.getAlternativeVersionId();
+      if (v < curVersion) setUR(v !== initialVersion, true);    // 撤销
+      else if (v <= topVersion) setUR(true, v !== topVersion);  // 重做
+      else { topVersion = v; setUR(true, false); }              // 新编辑
+      curVersion = v;
+    });
+    ed.addCommand(monaco.KeyMod.CmdCtrl | monaco.KeyCode.KeyS, () => flush()); // ⌘S 立即保存
+    undoBtn.onclick = () => { ed.focus(); ed.trigger('bar', 'undo'); };
+    redoBtn.onclick = () => { ed.focus(); ed.trigger('bar', 'redo'); };
     setTimeout(() => ed.focus(), 0);
   } else {
-    body.innerHTML =
-      `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">${modKey()}S 保存 · Esc 完成</span></div>` +
-      `<textarea id="ed-host" class="editor-area" spellcheck="false"></textarea>`;
+    body.innerHTML = editorBar + `<textarea id="ed-host" class="editor-area" spellcheck="false"></textarea>`;
     const ta = $('#ed-host');
     ta.value = data.content || '';
     ta.focus();
     getValue = () => ta.value;
+    const undoBtn = $('#ed-undo'), redoBtn = $('#ed-redo');
+    // 兜底编辑器查不到撤销栈，改过即放开两个键（execCommand 自己会判断有没有可撤销/重做的）
+    ta.addEventListener('input', () => { queue(); undoBtn.disabled = false; redoBtn.disabled = false; });
     ta.addEventListener('keydown', (ev) => {
-      if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') { ev.preventDefault(); save(); }
-      else if (ev.key === 'Escape') { ev.preventDefault(); leave(); }
+      if ((ev.metaKey || ev.ctrlKey) && ev.key === 's') { ev.preventDefault(); flush(); }
       ev.stopPropagation(); // 别冒泡到主区键盘导航
     });
+    undoBtn.onclick = () => { ta.focus(); document.execCommand('undo'); };
+    redoBtn.onclick = () => { ta.focus(); document.execCommand('redo'); };
   }
-  baseline = getValue ? getValue() : ''; // 以编辑器初始内容（Crepe 已规范化）为基准，避免误报未保存
-  $('#ed-save').onclick = () => save();
-  $('#ed-cancel').onclick = () => leave();
+  baseline = getValue ? getValue() : '';
+  if (edStatusTimer) clearInterval(edStatusTimer);
+  edStatusTimer = setInterval(renderSaved, 1000); // 每秒刷新「xx 之前已保存」
 }
 // md 预览即编辑：打开就是 Crepe 所见即所得，停笔 0.8s 自动落盘；「源码」按钮切 Monaco。
 // 离开（切文件/跳目录/关预览）由 guardDirty 的 autosaveFlush 把残余改动写掉，不弹确认框。
@@ -1304,7 +1328,7 @@ async function mdEditor(e, data, mode = 'rich') {
     mode = m;
     mona.disposeIfAny(); crepe.disposeIfAny();
     body.innerHTML =
-      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ${modKey()}S 立即保存</span></div>` +
+      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ⌘S 立即保存</span></div>` +
       `<div id="ed-host" class="${m === 'rich' ? 'crepe-host' : 'mona-host'}"></div>`;
     $('#md-mode').onclick = async () => {
       await flush();
@@ -1698,7 +1722,11 @@ async function loadRoots() {
   data.roots.forEach((r) => ul.appendChild(navDirLi(r.name, r.path)));
 }
 function renderRootsActive() {
-  $('#roots-list').querySelectorAll('li').forEach((li) => li.classList.toggle('active', li.dataset.path === state.cwd));
+  // 快速入口 / 收藏 / agent 项目 三个列表统一高亮「当前所在目录」，让用户清楚自己点开/身处哪一项
+  ['#roots-list', '#favs-list', '#agent-projects-list'].forEach((sel) => {
+    const ul = $(sel); if (!ul) return;
+    ul.querySelectorAll('li').forEach((li) => li.classList.toggle('active', li.dataset.path === state.cwd));
+  });
 }
 async function loadFavorites() {
   const data = await api('/api/favorites');
@@ -1728,6 +1756,7 @@ function renderFavs() {
     li.appendChild(un);
     ul.appendChild(li);
   });
+  renderRootsActive(); // 重渲后补一次高亮，让「当前所在的收藏」保持选中态
 }
 // Agent 项目：最近被 Claude Code / Codex 处理过的项目文件夹，从两者的本机会话日志扫出来
 function agoShort(ms) {
@@ -1763,6 +1792,7 @@ async function loadAgentProjects() {
     li.appendChild(when);
     ul.appendChild(li);
   });
+  renderRootsActive(); // 重渲后补一次高亮，让「当前所在的 agent 项目」保持选中态
 }
 
 // ---------- 最近修改 ----------
@@ -1893,7 +1923,7 @@ function maybeShowGuide() {
     <h2>欢迎用 FanBox</h2>
     <p>vibe coding 的驾驶舱——找文件、跑 agent、看它改、随手改，都在一个窗口：</p>
     <ul>
-      <li><b>${modKey()}K</b> 全局搜文件和文件夹；<b>${modKey()}↵</b> 把项目直接在编辑器整包打开；<code>内容:关键词</code> 搜文件里的字</li>
+      <li><b>⌘K</b> 全局搜文件和文件夹；<b>⌘↵</b> 把项目直接在编辑器整包打开；<code>内容:关键词</code> 搜文件里的字</li>
       <li>顶部 <b>终端</b> 按钮开内嵌终端跑 Claude Code 等 agent；<b>把文件/文件夹拖进终端</b> 即插入路径喂给它当上下文</li>
       <li><b>单击</b> 预览，<b>双击</b> 系统打开；预览里 <b>编辑</b> md 走所见即所得、<b>编辑图片</b> 可标注/打码/转格式</li>
       <li>agent 改了哪些文件，列表实时高亮「改·N」，不用切窗口盯着看</li>
@@ -1995,8 +2025,7 @@ function bindEvents() {
     tb.classList.toggle('tb-xxs', w < 790);
     tb.classList.toggle('tb-min', w < 660);
   }).observe(tb);
-  $('#btn-back').onclick = goBack;
-  $('#btn-up').onclick = goUp;
+  // ←/↑ 顶栏按钮已删（与面包屑功能重复、且和 macOS 红绿灯冲突）；后退/上一级保留 ⌘[ 和 Backspace 快捷键
   $('#preview-close').onclick = closePreview;
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-recent').onclick = showRecent;
@@ -2009,6 +2038,11 @@ function bindEvents() {
   $('#skills-entry').onclick = () => skillsView.show();
   $('#term-newtab').onclick = () => term.newTab();
   $('#term-max').onclick = () => term.toggleMax();
+  // 双击终端顶栏空白处（避开标签/按钮/输入框）= 铺满终端：agent 交互窗口最重要，给它一键放到最大
+  $('.term-head').addEventListener('dblclick', (ev) => {
+    if (ev.target.closest('button, .term-tab, input')) return;
+    term.toggleMax();
+  });
   $('#term-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
   const muteBtn = $('#term-mute');
   const syncMute = () => { muteBtn.textContent = state.muted ? '🔕' : '🔔'; muteBtn.title = state.muted ? '提示音已关（点击开启）' : '提示音已开（点击静音）'; };
@@ -2182,7 +2216,7 @@ function applyTheme(skin, rerender = true) {
 const TERM_ASK_RE = /(Do you want to (proceed|continue|make this edit|allow|use this)|Would you like to proceed|Ready to code\?|created or one you trust\?|tell (Claude|Codex) what to do differently|Yes, and don't ask again|Allow Codex to (run|apply|create)|Codex wants to|[❯›][ \t]*1\.[ \t]*Yes)/;
 const term = {
   sessions: [], seq: 0, active: null, maximized: false,
-  dock: localStorage.getItem('fb_term_dock') || 'bottom',
+  dock: localStorage.getItem('fb_term_dock') || 'right',
   available() { return !!(window.fanboxPty && window.Terminal && !window.__noXterm); },
   // 每套皮肤一整套手调 ANSI 主题——暗皮肤暗终端、亮皮肤亮终端，不再出现「暖纸里嵌黑块」
   themes: {
@@ -2234,8 +2268,15 @@ const term = {
     const termOpen = !$('#terminal-panel').classList.contains('hidden');
     mb.classList.toggle('fm-squeezed', termOpen && localStorage.getItem('fb_term_squeeze') === '1');
     const panel = $('#terminal-panel');
-    if (this.dock === 'bottom') { panel.style.height = (Number(localStorage.getItem('fb_term_h')) || 280) + 'px'; panel.style.width = ''; }
-    else { panel.style.width = (Number(localStorage.getItem('fb_term_w')) || 480) + 'px'; panel.style.height = ''; }
+    // 首次开终端：文件区:终端 = 1:2，终端占主区 2/3（用户拖过 resizer 后用记下的 px）
+    const mbr = mb.getBoundingClientRect();
+    if (this.dock === 'bottom') {
+      const h = Number(localStorage.getItem('fb_term_h')) || (mbr.height ? Math.round(mbr.height * 2 / 3) : 280);
+      panel.style.height = h + 'px'; panel.style.width = '';
+    } else {
+      const w = Number(localStorage.getItem('fb_term_w')) || (mbr.width ? Math.round(mbr.width * 2 / 3) : 480);
+      panel.style.width = w + 'px'; panel.style.height = '';
+    }
     applyPreviewSize(); // 预览随 dock 翻转轴向
     this.fitActive();
   },
@@ -2338,7 +2379,7 @@ const term = {
       try { const r = await window.fanboxPty.cwd(id); if (r && r.ok && r.cwd) cwd = r.cwd; } catch { /* */ }
       candidate = (cwd || '').replace(/\/$/, '') + '/' + p.replace(/^\.\//, '');
     }
-    const name = p.split('/').pop();
+    const name = p.replace(/\/+$/, '').split('/').pop(); // 去掉目录结尾 / 再取 basename，否则名为空 basename 搜索失效
     // 回扫 scrollback：agent 生成文件时几乎总打印过全路径（裸文件名常常不在 cwd 下），比模糊搜索可信
     const alt = isRel ? this.scanScrollbackFor(id, name, rowHint) : '';
     // 活跃项目根（浏览目录 + 各终端项目目录）作 basename 搜索的额外根
@@ -2352,6 +2393,8 @@ const term = {
     await navigate(dirOf(r.path));
     const e = state.entries.find((x) => x.path === r.path) || { path: r.path, name: baseOf(r.path), kind: 'text', isDir: false };
     applySelection(r.path); openPreview(e); recordRecent(r.path);
+    // md/html 是「写给人看」的：点开即全屏，最贴合「我想看看这文件长啥样」的意图（代码等退回常规分栏）
+    setPreviewMax(isMdName(r.path) || isHtmlName(r.path));
     toast(r.viaSearch ? '未精确命中，已打开最接近的「' + baseOf(r.path) + '」' : (r.viaScrollback ? '已按会话里出现过的路径打开' : '已打开'));
   },
   // 从 fromRow 往上回扫 scrollback（最多 2000 物理行），收集含该 basename 的绝对路径（/ 或 ~ 开头，
@@ -2422,9 +2465,12 @@ const term = {
     host.classList.add('show'); // 先可见再 open/fit：display:none 下 fit 量不出尺寸，PTY 会以 80 列出生
     const FitCtor = window.FitAddon ? (window.FitAddon.FitAddon || window.FitAddon) : null;
     const xterm = new window.Terminal({
-      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
+      fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-term').trim() || 'monospace',
       fontSize: 13, lineHeight: 1.2, cursorBlink: true, theme: this.theme(), scrollback: 5000,
       allowProposedApi: true, // unicode11 宽度 API 需要
+      // claude/codex 等 TUI 会开启鼠标上报，鼠标拖拽被程序吃掉 → 默认无法选中文字。
+      // 开这个开关后按住 Option 拖拽即可强制选中复制（iTerm/VS Code 终端同款约定）
+      macOptionClickForcesSelection: true,
       // agent 常输出按深色终端设计的 256 色/真彩（如淡蓝路径），在浅色皮肤上几乎隐形；
       // 自动把对比度不足的前景色压暗/提亮到 4.5:1（WCAG AA，VS Code 终端同款默认值）
       minimumContrastRatio: 4.5,
@@ -2452,7 +2498,9 @@ const term = {
       } catch { /* 滚动中关标签：xterm 已 dispose，忽略 */ } });
     }, { passive: true });
     // WebGL 渲染加速（大输出/TUI 不掉帧），失败或上下文丢失回退 DOM
-    if (!window.__noWebgl && window.WebglAddon) {
+    // 诊断开关：控制台跑 fbWebgl(false) 关掉 WebGL（用 DOM renderer）排查 CJK 残影乱码，fbWebgl(true) 恢复，需新开标签生效
+    const webglOff = (() => { try { return localStorage.getItem('fanbox.noWebgl') === '1'; } catch { return false; } })();
+    if (!webglOff && !window.__noWebgl && window.WebglAddon) {
       try {
         const Wg = window.WebglAddon.WebglAddon || window.WebglAddon;
         const wg = new Wg();
@@ -2555,6 +2603,10 @@ const term = {
           }
           // 截断路径直接创建链接，避免验证失败导致无法点击
           truncated.forEach((x) => push(x.s, x.e, x.cand, x.tail));
+          // 目录候选（结尾 /）：和带扩展名的裸文件名享受同等兜底——验证通过则用精确路径，
+          // 验证失败（终端 cwd 与打印的相对路径基准不一致时常见）也保留链接，点开走 basename 搜索。
+          // 文件靠扩展名白名单兜底，目录没扩展名，全靠结尾 / 这个强信号（散文几乎不这么写）。
+          const dirCands = r2.filter((x) => x.cand.endsWith('/'));
           const finish = () => {
             // 3. 裸文件名：unicode 字符类（调研.md 能点）+ 扩展名白名单（e.g/node.js 不误报）。
             // 紧跟斜杠路径、只隔空格的裸名多半是同一带空格路径的后半段：点哪段都按完整串定位
@@ -2567,6 +2619,8 @@ const term = {
               if (prev) push(mm.index, end, t.slice(prev.s, end), t.slice(end).split(/['"`]/)[0].slice(0, 160));
               else push(mm.index, end, mm[0], '');
             }
+            // 验证未命中的目录候选再兜一刀（已被 apply 精确链接的会被 overlaps 跳过）
+            dirCands.forEach((x) => push(x.s, x.e, x.cand, x.tail));
             cb(links.length ? links : undefined);
           };
           if (!r2.length) { finish(); return; }
@@ -3134,7 +3188,7 @@ function isNoisyChange(filename) {
   if (segs.some((s) => CHANGE_IGNORE.has(s) || s.startsWith('.'))) return true;
   const name = segs[segs.length - 1];
   return !name || name.endsWith('~') || name.endsWith('.swp')
-    || /\.(tmp|part|crdownload|lock)$|-(journal|shm|wal)$/i.test(name); // sqlite 等后台 App 的临时 sidecar
+    || /\.(tmp|part|crdownload|lock)(\.|$)|-(journal|shm|wal)$/i.test(name); // .tmp 可能在中段：原子写 foo.swift.tmp.<pid>.<hex>，sqlite 等后台 App 的临时 sidecar
 }
 function recordChange(dir, filename) {
   if (isNoisyChange(filename)) return; // 过滤构建/依赖/系统噪声
@@ -3727,11 +3781,8 @@ if (window.fanboxFs) {
 // ---------- 启动 ----------
 async function init() {
   // 桌面 app：标记 body，给顶部交通灯留位、顶部可拖拽
-  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) {
-    document.documentElement.classList.add('desktop');
-    if (window.fanboxEnv.platform === 'win32') document.documentElement.classList.add('win');
-    if (window.fanboxEnv.platform === 'darwin') document.documentElement.classList.add('mac');
-  }
+  if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) document.documentElement.classList.add('desktop');
+  try { window.fanboxWin?.trafficLights(true); } catch { /* 重载后兜底恢复系统按钮，防上次全屏藏了没显回来 */ }
   applyTheme(state.theme, false);
   if (state.sidebarCollapsed) { $('#app').classList.add('sidebar-collapsed'); $('#btn-sidebar')?.classList.add('on'); }
   applyLayout();
@@ -3765,7 +3816,6 @@ async function init() {
   loadAgentProjects();
   setInterval(loadAgentProjects, 120000); // agent 项目入口保持新鲜（服务端有 60s 缓存，开销很小）
   await navigate(state.home, false);
-  ensureFileAreaSize.armed = true; // 首屏导航之后，用户主动导航才允许自动调整布局
   // 恢复上次终端开合状态（dock 方位已由 applyDock 自带记忆）
   if (localStorage.getItem('fb_term_open') === '1' && term.available()) term.open();
   maybeShowGuide();
@@ -3787,4 +3837,8 @@ function bindUpdateNotice() {
   // 主进程启动 6 秒就推送，init 加载大目录时这里可能还没注册监听——补拉一次，错过的推送不丢
   if (window.fanboxUpdate.get) window.fanboxUpdate.get().then((m) => { if (m) show(m); }).catch(() => {});
 }
+
+// 终端渲染器诊断开关：fbWebgl(false) 关 WebGL 用 DOM renderer 排查 CJK 残影，fbWebgl(true) 恢复。改完新开一个终端标签生效
+window.fbWebgl = (on) => { try { if (on) localStorage.removeItem('fanbox.noWebgl'); else localStorage.setItem('fanbox.noWebgl', '1'); } catch {} const off = (() => { try { return localStorage.getItem('fanbox.noWebgl') === '1'; } catch { return false; } })(); console.log('[fanbox] WebGL ' + (off ? '已关闭（DOM renderer）' : '已开启') + '，请新开一个终端标签验证'); return !off; };
+
 init();

@@ -1,7 +1,7 @@
 {
   "name": "fanbox",
-  "version": "1.9.1",
-  "description": "FanBox — the cockpit for vibe coding. Browse/search/preview/edit local files, command coding agents from the built-in terminal.",
+  "version": "1.11.3-win",
+  "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "bin": {
     "fanbox": "server.js"
   },
@@ -14,7 +14,8 @@
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
     "check:vendor-patch": "grep -q '20===e.keyCode||229===e.keyCode' public/vendor/xterm/xterm.js",
     "predist": "npm run check:vendor-patch",
-    "dist": "electron-builder --mac"
+    "dist": "electron-builder --mac",
+    "dist:win": "electron-builder --win"
   },
   "build": {
     "appId": "com.huashu.fanbox",
@@ -43,14 +44,16 @@
         }
       ]
     },
+    "dmg": {
+      "title": "FanBox",
+      "writeUpdateInfo": false
+    },
     "win": {
       "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
-          "arch": [
-            "x64"
-          ]
+          "arch": ["x64"]
         }
       ]
     },
@@ -63,10 +66,6 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "FanBox"
-    },
-    "dmg": {
-      "title": "FanBox",
-      "writeUpdateInfo": false
     }
   },
   "type": "commonjs",
@@ -81,7 +80,7 @@
     "node-pty": "^1.0.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.2",
+    "@electron/rebuild": "^3.7.0",
     "@milkdown/crepe": "^7.21.2",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",

@@ -28,8 +28,6 @@ window.FANBOX_DICT = {
 
   // ---------- 顶栏 ----------
   '折叠 / 展开侧栏 (⌘B)': 'Toggle sidebar (⌘B)',
-  '后退': 'Back',
-  '上一级': 'Up one level',
   '显示隐藏文件': 'Show hidden files',
   '隐藏文件': 'Hidden files',
   '名称': 'Name',

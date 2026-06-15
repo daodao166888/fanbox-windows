@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('fanboxUpdate', {
 
 contextBridge.exposeInMainWorld('fanboxWin', {
   focus: () => ipcRenderer.invoke('win:focus'), // 点通知拉回前台
+  trafficLights: (show) => ipcRenderer.invoke('win:traffic', { show }), // 全屏预览时藏/显左上角系统按钮
 });
 
 contextBridge.exposeInMainWorld('fanboxEnv', {
