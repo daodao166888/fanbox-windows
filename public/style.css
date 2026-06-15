@@ -884,6 +884,8 @@ kbd {
 .desktop .brand { -webkit-app-region: drag; }
 /* 顶栏空白处也可拖窗，但其中的按钮/面包屑保持可点 */
 .desktop #topbar { -webkit-app-region: drag; }
+/* Windows：titleBarOverlay 的系统按钮（最小化/最大化/关闭）在右上角，给 topbar 右侧留出空间 */
+.is-win #topbar { padding-right: 140px; }
 /* 侧栏不做整体拖拽区：#sidebar 自身是滚动容器（overflow-y:auto），而 Electron 的
    app-region:drag 区域收不到滚轮事件——整栏 drag 会让滚动时灵时卡（#6 的方案回退）。
    拖窗用品牌区和顶栏，足够顺手 */
