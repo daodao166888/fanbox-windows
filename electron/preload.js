@@ -58,3 +58,8 @@ contextBridge.exposeInMainWorld('fanboxEnv', {
   isDesktopApp: true,
   platform: process.platform,
 });
+
+// 皮肤图标切换
+contextBridge.exposeInMainWorld('fanboxSkin', {
+  setIcon: (skin) => ipcRenderer.invoke('skin:set-icon', { skin }),
+});

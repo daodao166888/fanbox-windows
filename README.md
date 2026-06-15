@@ -148,13 +148,33 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 
 从 [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) 下载最新 `.dmg`，拖进「应用程序」即可。Apple Silicon (arm64) 原生。
 
-Download the latest `.dmg` from [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) and drag it into Applications. Native Apple Silicon (arm64).
+### Windows 版安装
 
-> 已用 Apple Development 证书签名 + hardened runtime。首次打开若提示「未验证的开发者」：**右键 → 打开 → 确认**即可。  
-> Signed with an Apple Development certificate + hardened runtime. If macOS warns about an unverified developer on first launch: **right-click → Open → confirm**.
->
-> 应用内置**更新提醒**：检测到 GitHub 上有新 Release 时，右下角会弹一条提示引导下载，不强更、可对单个版本「不再提醒」。  
-> Built-in **update notifications**: when a new release lands on GitHub, a capsule appears at the bottom right. Never forced; individual versions can be muted.
+```bash
+# 克隆仓库
+git clone https://github.com/daodao166888/fanbox-windows.git
+cd fanbox-windows
+
+# 安装依赖（自动创建桌面快捷方式）
+npm install
+
+# 启动桌面版
+npx electron .
+```
+
+安装完成后，桌面会自动创建 `FanBox.lnk` 快捷方式，双击即可启动~
+
+### 打包成安装包 / Build Installer
+
+```bash
+npm run dist:win
+```
+
+生成的安装包在 `dist/` 目录。
+
+### macOS 版安装
+
+从原作者 [**Releases**](https://github.com/alchaincyf/fanbox/releases/latest) 下载最新 `.dmg`，拖进「应用程序」即可。Apple Silicon (arm64) 原生。
 
 ### 网页版（不打包，直接跑）/ Web (no packaging)
 
