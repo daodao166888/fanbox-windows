@@ -1162,12 +1162,8 @@ async function toggleFav(e) {
 
 // ---------- 文件操作（编辑 / 重命名 / 废纸篓 / 新建）----------
 // 重拉当前目录但保留筛选词，操作后刷新视图
-let refreshCount = 0;
 async function refresh() {
   if (!state.cwd || state.recentMode) return;
-  refreshCount++;
-  // 打印调用栈，找出是谁在不断调用 refresh()
-  console.log(`[fanbox] refresh() 调用 #${refreshCount}`, new Error().stack?.split('\n').slice(1, 4).join(' ← '));
   const data = await api('/api/list?path=' + encodeURIComponent(state.cwd));
   if (data.error) return;
   state.entries = data.entries;
