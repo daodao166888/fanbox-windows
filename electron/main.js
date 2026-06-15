@@ -421,6 +421,7 @@ ipcMain.handle('pty:proc', (e, { id }) => {
 // 多目录监听：浏览目录 + 每个终端会话所在的项目目录。一下午开多个项目跑 agent 时，
 // 不在前台的项目也能感知变更。前端发来期望监听集，这里做增量 diff（关掉多余、补上新增）。
 const watchers = new Map(); // dir -> FSWatcher
+let watchEventCount = 0; // 调试：统计事件数量
 function startWatch(dir) {
   if (watchers.has(dir) || !dir || !fs.existsSync(dir)) return;
   try {
@@ -429,6 +430,9 @@ function startWatch(dir) {
     const w = fs.watch(dir, { persistent: false, recursive }, (evt, filename) => {
       if (!win || win.isDestroyed()) return;
       const name = filename ? filename.toString() : null;
+      watchEventCount++;
+      // 调试：每 100 个事件打印一次
+      if (watchEventCount % 100 === 0) console.log(`[fanbox] fs.watch 事件数: ${watchEventCount}`);
       // FSEvents 连「文件只是被读了一下」（atime/元数据更新）都报：agent cat/Read 个文件、
       // Spotlight 扫一遍都会触发。mtime/ctime 都不新鲜 = 内容根本没动过，丢弃；
       // stat 失败 = 刚被删，是真变更，照常转发
@@ -442,6 +446,7 @@ function startWatch(dir) {
       win.webContents.send('fs:changed', { dir, filename: name });
     });
     watchers.set(dir, w);
+    console.log(`[fanbox] 开始监听: ${dir} (recursive: ${recursive})`);
   } catch { /* 无权限等，跳过该目录 */ }
 }
 ipcMain.handle('fs:watch-set', (e, { dirs }) => {

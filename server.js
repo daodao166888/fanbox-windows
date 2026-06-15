@@ -8,6 +8,9 @@
 'use strict';
 
 const http = require('http');
+// sharp: 跨平台图片处理库，用于生成缩略图（替代 macOS 的 sips）
+let sharp = null;
+try { sharp = require('sharp'); } catch { /* 未安装时降级 */ }
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
@@ -1170,14 +1173,28 @@ const thumbInflight = new Map(); // cacheFile -> Promise，去重并发生成
 function run(cmd, args) {
   return new Promise((resolve, reject) => execFile(cmd, args, { timeout: 15000 }, (e) => (e ? reject(e) : resolve())));
 }
-// 图片走 sips 缩放（快）；视频/PDF/其它走 qlmanage QuickLook 抽帧
+// 图片缩略图：优先 sharp（跨平台），降级 sips（macOS），再降级直接返回原图
 async function generateThumb(src, e, size, cacheFile, isImg) {
   await fsp.mkdir(THUMB_DIR, { recursive: true });
   if (isImg) {
-    const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
-    await run('sips', ['-s', 'format', fmt, '-Z', String(size), src, '--out', cacheFile]);
+    // 方案1：sharp（跨平台，推荐）
+    if (sharp) {
+      const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
+      await sharp(src).resize(size, size, { fit: 'inside', withoutEnlargement: true }).toFormat(fmt, { quality: 80 }).toFile(cacheFile);
+      return;
+    }
+    // 方案2：sips（macOS）
+    if (process.platform === 'darwin') {
+      const fmt = cacheFile.endsWith('.png') ? 'png' : 'jpeg';
+      await run('sips', ['-s', 'format', fmt, '-Z', String(size), src, '--out', cacheFile]);
+      return;
+    }
+    // 方案3：无可用工具，直接复制原图（让前端自行缩放）
+    await fsp.copyFile(src, cacheFile);
     return;
   }
+  // 视频/PDF/其它：qlmanage（macOS）或跳过
+  if (process.platform !== 'darwin') throw new Error('thumb not supported on this platform');
   const tmpDir = path.join(THUMB_DIR, '_ql_' + process.pid + '_' + crypto.randomBytes(4).toString('hex'));
   await fsp.mkdir(tmpDir, { recursive: true });
   try {

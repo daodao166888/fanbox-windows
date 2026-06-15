@@ -412,14 +412,11 @@ function favBtn(e) {
   return `<span class="fav-btn ${on ? 'on' : ''}" title="收藏">${svgWrap(SVG.star, 'currentColor', 15, on)}</span>`;
 }
 function thumbHtml(e) {
-  // 关键性能修复：用缩略图端点（sips/qlmanage 缓存小图），不再把原图/原视频整文件拉进来解码
+  // 图片/视频：统一显示文件图标，视觉更整齐（不显示真实缩略图）
   if (e.kind === 'image' || e.kind === 'video') {
-    const w = state.gridSize === 'lg' ? 320 : (state.gridSize === 'sm' ? 160 : 240);
-    const fb = e.kind === 'video' ? 'window.__svgVideo' : 'window.__svgImg';
-    // 照片按原比例呈现（object-fit:contain）+ 柔和投影，像散落的照片；缩略图失败回退强色字形
-    const img = `<img class="thumb" loading="lazy" decoding="async" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=${w}&v=${e.mtime || 0}" alt="" onerror="this.closest('.thumb-wrap').replaceWith(Object.assign(document.createElement('span'),{className:'svg-icon',innerHTML:${fb}}))">`;
-    const play = e.kind === 'video' ? '<span class="play-badge"><svg viewBox="0 0 24 24" width="40%" height="40%"><path d="M8 5.5l11 6.5-11 6.5z" fill="#fff"/></svg></span>' : '';
-    return `<span class="thumb-wrap${e.kind === 'video' ? ' is-video' : ''}">${img}${play}</span>`;
+    const gs = state.gridSize;
+    const sz = gs === 'lg' ? 72 : gs === 'sm' ? 40 : 56;
+    return `<span class="svg-icon">${iconSvg(e, sz)}</span>`;
   }
   const gs = state.gridSize;
   // 文件夹比文件略大，强化「容器」存在感；按网格尺寸分三档
@@ -1165,8 +1162,12 @@ async function toggleFav(e) {
 
 // ---------- 文件操作（编辑 / 重命名 / 废纸篓 / 新建）----------
 // 重拉当前目录但保留筛选词，操作后刷新视图
+let refreshCount = 0;
 async function refresh() {
   if (!state.cwd || state.recentMode) return;
+  refreshCount++;
+  // 打印调用栈，找出是谁在不断调用 refresh()
+  console.log(`[fanbox] refresh() 调用 #${refreshCount}`, new Error().stack?.split('\n').slice(1, 4).join(' ← '));
   const data = await api('/api/list?path=' + encodeURIComponent(state.cwd));
   if (data.error) return;
   state.entries = data.entries;
