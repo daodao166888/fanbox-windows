@@ -1174,6 +1174,17 @@ function shellQuote(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
+// Windows：自动检测所有可用磁盘分区
+function detectWinDrives() {
+  const drives = [];
+  for (let i = 65; i <= 90; i++) { // A-Z
+    const letter = String.fromCharCode(i);
+    const root = `${letter}:\\`;
+    try { if (fs.existsSync(root)) drives.push([`${letter}盘`, root]); } catch { /* */ }
+  }
+  return drives;
+}
+
 function defaultRoots() {
   const candidates = PLATFORM === 'win32'
     ? [
@@ -1185,6 +1196,7 @@ function defaultRoots() {
         ['视频', path.join(HOME, 'Videos')],
         ['代码', path.join(HOME, 'Code')],
         ['项目', path.join(HOME, 'Projects')],
+        ...detectWinDrives(),
       ]
     : [
         ['主目录', HOME],
