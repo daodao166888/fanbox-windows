@@ -514,10 +514,19 @@ async function codexOrganizeFlags(bin) {
 async function findAgentBin(name) {
   // GUI 启动的 app 没有用户 shell 的 PATH，走登录 shell 找一次绝对路径
   return new Promise((resolve) => {
-    execFile('/bin/zsh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
-      const out = String(stdout || '').trim().split('\n').pop();
-      resolve(!err && out && out.startsWith('/') ? out : null);
-    });
+    if (PLATFORM === 'win32') {
+      // Windows: 用 where 命令查找可执行文件
+      execFile('cmd', ['/c', 'where', name], { timeout: 8000 }, (err, stdout) => {
+        const out = String(stdout || '').trim().split(/\r?\n/)[0];
+        resolve(!err && out && /^[A-Z]:\\/i.test(out) ? out : null);
+      });
+    } else {
+      // macOS/Linux: 走登录 shell
+      execFile('/bin/zsh', ['-lc', `command -v ${name}`], { timeout: 8000 }, (err, stdout) => {
+        const out = String(stdout || '').trim().split('\n').pop();
+        resolve(!err && out && out.startsWith('/') ? out : null);
+      });
+    }
   });
 }
 
@@ -797,12 +806,26 @@ async function diskUsage(p) {
     try { const st = await fsp.lstat(full); if (st.isFile()) items.push({ name: d.name, size: st.size, isDir: false }); } catch { /* */ }
   }));
   if (dirs.length) {
-    const out = await new Promise((resolve) => {
-      execFile('du', ['-sk', ...dirs], { timeout: 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(stdout || ''));
-    });
-    for (const line of out.split('\n')) {
-      const m = line.match(/^(\d+)\s+(.+)$/);
-      if (m) items.push({ name: path.basename(m[2]), size: Number(m[1]) * 1024, isDir: true });
+    if (PLATFORM === 'win32') {
+      // Windows: 用 PowerShell 逐个算目录大小
+      for (const d of dirs) {
+        try {
+          const psCmd = `(Get-ChildItem -LiteralPath '${d.replace(/'/g, "''")}' -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum`;
+          const out = await new Promise((resolve) => {
+            execFile('powershell', ['-NoProfile', '-Command', psCmd], { timeout: 120000 }, (err, stdout) => resolve(stdout || '0'));
+          });
+          items.push({ name: path.basename(d), size: parseInt(out.trim(), 10) || 0, isDir: true });
+        } catch { /* */ }
+      }
+    } else {
+      // macOS/Linux: 用 du 批量算
+      const out = await new Promise((resolve) => {
+        execFile('du', ['-sk', ...dirs], { timeout: 120000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(stdout || ''));
+      });
+      for (const line of out.split('\n')) {
+        const m = line.match(/^(\d+)\s+(.+)$/);
+        if (m) items.push({ name: path.basename(m[2]), size: Number(m[1]) * 1024, isDir: true });
+      }
     }
   }
   items.sort((a, b) => b.size - a.size);
@@ -873,12 +896,21 @@ async function archiveList(p) {
       const parsed = await zipNames(file, MAX); // 自读中央目录，中文名按 GBK/UTF-8 正确解（unzip 会乱码）
       if (parsed) {
         entries.push(...parsed);
-      } else { // zip64 / 异常结构本解析器够不着：回退 unzip（名字可能乱码，但至少列得出）
-        const out = await run('unzip', ['-l', '--', file]);
-        for (const line of out.split('\n')) {
-          const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
-          if (m) entries.push({ name: m[2], size: Number(m[1]) });
-          if (entries.length > MAX) break;
+      } else { // zip64 / 异常结构本解析器够不着：回退系统工具
+        if (PLATFORM === 'win32') {
+          // Windows: 用 tar 列出 zip 内容（Win10+ 自带 tar）
+          const out = await run('tar', ['-tf', file]);
+          for (const line of out.split('\n')) {
+            if (line.trim()) entries.push({ name: line.trim() });
+            if (entries.length > MAX) break;
+          }
+        } else {
+          const out = await run('unzip', ['-l', '--', file]);
+          for (const line of out.split('\n')) {
+            const m = line.match(/^\s*(\d+)\s+\S+\s+\S+\s+(.+)$/);
+            if (m) entries.push({ name: m[2], size: Number(m[1]) });
+            if (entries.length > MAX) break;
+          }
         }
       }
     } else if (/\.(tar|tgz|tbz2?|txz)$/.test(name) || /\.tar\.(gz|bz2|xz|zst)$/.test(name)) {
@@ -967,7 +999,7 @@ async function termVerify(b) {
   const results = await Promise.all(items.map(async (it) => {
     if (!it || typeof it.cand !== 'string') return false;
     let p = it.cand;
-    if (!p.startsWith('/') && !p.startsWith('~')) p = cwd.replace(/\/$/, '') + '/' + p.replace(/^\.\//, '');
+    if (!p.startsWith('/') && !p.startsWith('~') && !/^[A-Z]:\\/i.test(p)) p = cwd.replace(/[/\\]$/, '') + path.sep + p.replace(/^\.[/\\]/, '');
     return !!(await statWithTail(p, it.tail || ''));
   }));
   return { ok: true, results };
@@ -1131,19 +1163,34 @@ function openDefault(target, withApp) {
 }
 
 function shellQuote(s) {
+  if (PLATFORM === 'win32') {
+    // Windows cmd 用双引号，内部双引号转义为 ""
+    return `"${String(s).replace(/"/g, '""')}"`;
+  }
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
 function defaultRoots() {
-  const candidates = [
-    ['主目录', HOME],
-    ['桌面', path.join(HOME, 'Desktop')],
-    ['文档', path.join(HOME, 'Documents')],
-    ['下载', path.join(HOME, 'Downloads')],
-    ['代码 / Code', path.join(HOME, 'Code')],
-    ['项目 / Projects', path.join(HOME, 'Projects')],
-    ['Developer', path.join(HOME, 'Developer')],
-  ];
+  const candidates = PLATFORM === 'win32'
+    ? [
+        ['主目录', HOME],
+        ['桌面', path.join(HOME, 'Desktop')],
+        ['文档', path.join(HOME, 'Documents')],
+        ['下载', path.join(HOME, 'Downloads')],
+        ['图片', path.join(HOME, 'Pictures')],
+        ['视频', path.join(HOME, 'Videos')],
+        ['代码', path.join(HOME, 'Code')],
+        ['项目', path.join(HOME, 'Projects')],
+      ]
+    : [
+        ['主目录', HOME],
+        ['桌面', path.join(HOME, 'Desktop')],
+        ['文档', path.join(HOME, 'Documents')],
+        ['下载', path.join(HOME, 'Downloads')],
+        ['代码 / Code', path.join(HOME, 'Code')],
+        ['项目 / Projects', path.join(HOME, 'Projects')],
+        ['Developer', path.join(HOME, 'Developer')],
+      ];
   return candidates
     .filter(([, p]) => { try { return fs.statSync(p).isDirectory(); } catch { return false; } })
     .map(([name, p]) => ({ name, path: p }));
