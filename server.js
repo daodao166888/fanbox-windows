@@ -97,6 +97,10 @@ function resolvePath(p) {
   if (!p || typeof p !== 'string') return HOME;
   if (p.includes('\0')) throw new Error('非法路径');
   let abs = p.startsWith('~') ? path.join(HOME, p.slice(1)) : p;
+  // Windows 盘符：D: 或 D:/ 都视为绝对路径
+  if (PLATFORM === 'win32' && /^[A-Z]:[/\\]?$/i.test(abs)) {
+    abs = abs.replace(/[/\\]?$/, '\\');
+  }
   if (!path.isAbsolute(abs)) abs = path.join(HOME, abs);
   return path.normalize(abs);
 }
