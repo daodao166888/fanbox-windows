@@ -158,6 +158,42 @@
   <script src="/vendor/xterm/addon-fit.js" onerror="window.__noXterm=1"></script>
   <script src="/vendor/xterm/addon-webgl.js" onerror="window.__noWebgl=1"></script>
   <script src="/vendor/xterm/addon-unicode11.js" onerror="window.__noUnicode11=1"></script>
+  <!-- Windows 终端复制粘贴：Ctrl+C 有选中文本时复制，Ctrl+V 从剪贴板粘贴 -->
+  <script>
+  (function() {
+    if (navigator.platform && !navigator.platform.includes('Win')) return;
+    const origOpen = window.Terminal && window.Terminal.prototype.open;
+    if (!origOpen) return;
+    window.Terminal.prototype.open = function(container) {
+      origOpen.call(this, container);
+      const term = this;
+      // 拦截 Ctrl+C：有选中文本时复制到剪贴板，否则正常发送 SIGINT
+      term.attachCustomKeyEventHandler(function(ev) {
+        if (ev.type !== 'keydown') return true;
+        const ctrl = ev.ctrlKey || ev.metaKey;
+        if (ctrl && ev.key.toLowerCase() === 'c') {
+          const sel = term.getSelection();
+          if (sel && sel.length > 0) {
+            navigator.clipboard.writeText(sel).catch(() => {});
+            term.clearSelection();
+            ev.preventDefault();
+            return false;
+          }
+          return true; // 无选中文本，放行 SIGINT
+        }
+        // Ctrl+V：从剪贴板粘贴
+        if (ctrl && ev.key.toLowerCase() === 'v') {
+          navigator.clipboard.readText().then(text => {
+            if (text) term.paste(text);
+          }).catch(() => {});
+          ev.preventDefault();
+          return false;
+        }
+        return true;
+      });
+    };
+  })();
+  </script>
   <script src="/i18n-dict.js" onerror="window.__noDict=1"></script>
   <script src="/i18n.js"></script>
   <script src="/app.js"></script>
