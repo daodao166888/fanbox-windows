@@ -4,13 +4,9 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Release tag (e.g. v1.12.0)'
-        required: true
 
 jobs:
+  # ========== 第一步：构建 ==========
   build:
     runs-on: windows-latest
     steps:
@@ -30,27 +26,117 @@ jobs:
         run: npx electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 跳过代码签名（以后买了证书再启用）
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      - name: Upload artifacts
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: fanbox-windows-installer
+          name: fanbox-installer
           path: dist/*.exe
-          retention-days: 7
+          retention-days: 3
 
-  release:
+  # ========== 第二步：自动测试 ==========
+  test:
     needs: build
+    runs-on: windows-latest
+    steps:
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: fanbox-installer
+          path: ./dist
+
+      - name: Check installer exists and size is valid
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem ./dist/*.exe | Select-Object -First 1
+          if (-not $exe) {
+            Write-Error "FAIL: No .exe file found in dist/"
+            exit 1
+          }
+          $sizeMB = [math]::Round($exe.Length / 1MB, 1)
+          Write-Host "Installer: $($exe.Name)"
+          Write-Host "Size: $sizeMB MB"
+          if ($exe.Length -lt 50MB) {
+            Write-Error "FAIL: Installer too small ($sizeMB MB), expected > 50MB"
+            exit 1
+          }
+          if ($exe.Length -gt 300MB) {
+            Write-Error "FAIL: Installer too large ($sizeMB MB), expected < 300MB"
+            exit 1
+          }
+          Write-Host "PASS: File size OK"
+
+      - name: Test silent install
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem ./dist/*.exe | Select-Object -First 1
+          Write-Host "Running silent install: $($exe.FullName)"
+          $process = Start-Process -FilePath $exe.FullName `
+            -ArgumentList "/S /D=$env:USERPROFILE\FanBoxTest" `
+            -Wait -PassThru -Timeout 120
+          Write-Host "Exit code: $($process.ExitCode)"
+          if ($process.ExitCode -ne 0) {
+            Write-Error "FAIL: Installer returned exit code $($process.ExitCode)"
+            exit 1
+          }
+          if (Test-Path "$env:USERPROFILE\FanBoxTest\FanBox.exe") {
+            Write-Host "PASS: FanBox.exe installed successfully"
+          } else {
+            Write-Error "FAIL: FanBox.exe not found after install"
+            exit 1
+          }
+
+      - name: Test app launches
+        shell: pwsh
+        run: |
+          $appPath = "$env:USERPROFILE\FanBoxTest\FanBox.exe"
+          if (-not (Test-Path $appPath)) {
+            Write-Error "FAIL: App not found at $appPath"
+            exit 1
+          }
+          Write-Host "Launching FanBox..."
+          $proc = Start-Process -FilePath $appPath -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) {
+            Write-Error "FAIL: App crashed immediately after launch"
+            exit 1
+          }
+          Write-Host "App is running (PID: $($proc.Id)), stopping..."
+          $proc.Kill()
+          Start-Sleep -Seconds 2
+          Write-Host "PASS: App launches and runs OK"
+
+      - name: Cleanup test install
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path "$env:USERPROFILE\FanBoxTest") {
+            Remove-Item -Recurse -Force "$env:USERPROFILE\FanBoxTest"
+            Write-Host "Cleaned up test install"
+          }
+
+  # ========== 第三步：人工确认 ==========
+  approve:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Ready to publish
+        run: echo "All tests passed. Release approved!"
+
+  # ========== 第四步：正式发布 ==========
+  publish:
+    needs: approve
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
       contents: write
     steps:
-      - name: Download artifacts
+      - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          name: fanbox-windows-installer
+          name: fanbox-installer
           path: ./dist
 
       - name: Create Release
