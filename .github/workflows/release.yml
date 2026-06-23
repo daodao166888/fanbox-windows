@@ -74,7 +74,9 @@ jobs:
           Write-Host "Running silent install: $($exe.FullName)"
           $process = Start-Process -FilePath $exe.FullName `
             -ArgumentList "/S /D=$env:USERPROFILE\FanBoxTest" `
-            -Wait -PassThru -Timeout 120
+            -PassThru
+          $process | Wait-Process -Timeout 120
+          $process.Refresh()
           Write-Host "Exit code: $($process.ExitCode)"
           if ($process.ExitCode -ne 0) {
             Write-Error "FAIL: Installer returned exit code $($process.ExitCode)"
