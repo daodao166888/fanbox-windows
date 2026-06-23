@@ -6,6 +6,7 @@ build/*
 !build/icon.icns
 !build/icon.png
 !build/icon-1024.png
+!build/icon.ico
 !build/entitlements.mac.plist
 
 # 系统与编辑器
