@@ -118,18 +118,9 @@ jobs:
             Write-Host "Cleaned up test install"
           }
 
-  # ========== 第三步：人工确认 ==========
-  approve:
-    needs: test
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - name: Ready to publish
-        run: echo "All tests passed. Release approved!"
-
-  # ========== 第四步：正式发布 ==========
+  # ========== 第三步：正式发布（测试通过后自动发布）==========
   publish:
-    needs: approve
+    needs: test
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/')
     permissions:
