@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "1.11.3-win",
+  "version": "2.5.0-win",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "bin": {
     "fanbox": "server.js"
