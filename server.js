@@ -2142,6 +2142,36 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       return sendJSON(res, 200, await createEntry(b.path, b.name, b.type));
     }
+    if (p === '/api/agents') {
+      // coding agent 启动按钮（#38）：GET 回配置，POST 存设置面板勾选的 enabledAgents
+      // enabled = 面板勾选的内置 agent id；custom = config.json 手写的 agents 数组（同 id 覆盖内置命令，新 id 追加）
+      if (req.method === 'POST') {
+        const b = await readBody(req);
+        const enabled = (Array.isArray(b.enabled) ? b.enabled : [])
+          .filter((x) => typeof x === 'string' && /^[\w-]{1,32}$/.test(x)).slice(0, 32);
+        await updateConfig((c) => { c.enabledAgents = enabled; });
+        return sendJSON(res, 200, { ok: true, enabled });
+      }
+      const cfg = await readConfig();
+      const custom = (Array.isArray(cfg.agents) ? cfg.agents : [])
+        .filter((a) => a && typeof a.id === 'string' && a.id && typeof a.cmd === 'string' && a.cmd);
+      return sendJSON(res, 200, { enabled: Array.isArray(cfg.enabledAgents) ? cfg.enabledAgents : null, custom });
+    }
+    if (p === '/api/agents/which') {
+      // 装没装探测：bins 走登录 shell command -v；apps 是桌面应用，走 open -Ra
+      const out = {};
+      const bins = String(url.searchParams.get('bins') || '').split(',')
+        .map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._-]{1,64}$/.test(s)).slice(0, 32);
+      const apps = String(url.searchParams.get('apps') || '').split(',')
+        .map((s) => s.trim()).filter((s) => /^[\w .-]{1,64}$/.test(s)).slice(0, 32);
+      await Promise.all([
+        ...bins.map(async (b) => { out[b] = !!(await findAgentBin(b)); }),
+        ...apps.map((a) => new Promise((resolve) => {
+          execFile('/usr/bin/open', ['-Ra', a], { timeout: 8000 }, (err) => { out[a] = !err; resolve(); });
+        })),
+      ]);
+      return sendJSON(res, 200, out);
+    }
     if (p === '/api/agent-projects') {
       return sendJSON(res, 200, await agentProjects());
     }

@@ -312,6 +312,13 @@ kbd {
 .list .row .meta { color: var(--text-faint); font-size: 12px; }
 .list-head { color: var(--text-faint); font-size: 11px; text-transform: uppercase; letter-spacing: 1px; cursor: default; }
 .list-head:hover { background: none; }
+/* 文件区被压窄时列让位（#49）：名称优先，先藏「大小」再藏「修改时间」 */
+#file-area.fa-narrow .list .row { grid-template-columns: 30px 1fr 130px 26px; }
+#file-area.fa-narrow .list .row > :nth-child(4) { display: none; }
+#file-area.fa-tight .list .row { grid-template-columns: 30px 1fr 26px; }
+#file-area.fa-tight .list .row > :nth-child(3) { display: none; }
+/* 自定义 agent 启动按钮：没有品牌图标时显示两字缩写 */
+.agent-launch .agent-abbr { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
 
 /* 收藏按钮（悬停出现，可直接收藏，无需先预览） */
 .fav-btn { position: absolute; opacity: 0; transition: 0.12s; cursor: pointer; color: var(--text-faint); font-size: 15px; }
@@ -870,8 +877,21 @@ kbd {
 /* 一键启动 agent：官方品牌图标按钮（Claude 珊瑚光芒标 / Codex 官方标） */
 .term-actions .agent-launch { display: inline-flex; align-items: center; justify-content: center; padding: 3px 6px; color: var(--text); }
 .term-actions .agent-launch:hover { background: var(--bg-3); }
-.term-actions .agent-launch svg { display: block; flex: none; }
-.term-actions .agent-launch + .agent-launch { margin-right: 4px; } /* 两个 agent 按钮成组，与右侧其它操作拉开一点距离 */
+.term-actions .agent-launch svg, .term-actions .agent-launch img { display: block; flex: none; width: 15px; height: 15px; }
+.term-actions .agent-launch + #agent-config { margin-left: 2px; } /* agent 按钮成组，设置入口贴在组尾 */
+
+/* agent 启动入口设置面板（#38） */
+.agents-pop { position: fixed; z-index: 200; width: 300px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,0.32); overflow: hidden; }
+.agents-pop .ap-head { padding: 9px 12px; font-size: 12px; font-weight: 600; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+.agents-pop .ap-list { overflow-y: auto; max-height: 46vh; padding: 4px 0; }
+.agents-pop .ap-row { display: flex; align-items: center; gap: 9px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text); }
+.agents-pop .ap-row:hover { background: var(--bg-3); }
+.agents-pop .ap-row input { accent-color: var(--accent); margin: 0; }
+.agents-pop .ap-ic { display: inline-flex; width: 15px; justify-content: center; }
+.agents-pop .ap-ic svg, .agents-pop .ap-ic img { width: 15px; height: 15px; display: block; }
+.agents-pop .ap-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agents-pop .ap-flag { font-size: 11px; color: var(--yellow); cursor: copy; flex: none; }
+.agents-pop .ap-foot { padding: 8px 12px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); line-height: 1.7; }
 
 #xterm-host { flex: 1; position: relative; min-height: 0; overflow: hidden; background: var(--bg); }
 .xterm-instance { position: absolute; inset: 4px 2px 2px 8px; display: none; }

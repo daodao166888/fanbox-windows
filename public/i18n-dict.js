@@ -259,6 +259,12 @@ window.FANBOX_DICT = {
   // ---------- 终端 ----------
   '启动 Claude Code（跳过权限确认）：空闲终端就地启动，正跑着任务则新开标签': 'Launch Claude Code (skipping permission prompts): starts in the idle terminal, or opens a new tab if one is busy',
   '启动 Codex：空闲终端就地启动，正跑着任务则新开标签': 'Launch Codex: starts in the idle terminal, or opens a new tab if one is busy',
+  '选择一键启动的 coding agent': 'Choose quick-launch coding agents',
+  '一键启动的 coding agent': 'Quick-launch coding agents',
+  '勾选即生效 · 点「未装」复制安装命令': 'Changes apply instantly · click "not installed" to copy the install command',
+  '高级：~/.fanbox/config.json 的 agents 数组可自定义命令 / 加新 agent': 'Advanced: override commands or add agents via the agents array in ~/.fanbox/config.json',
+  '未装': 'not installed',
+  '已复制安装命令': 'Install command copied',
   '文件跟随：跟着当前终端 tab 的 agent，它改哪个文件，文件区和预览就跟到哪；html/md 边写边出实时预览（手动浏览即自动停）': "Follow files: tracks the current terminal tab's agent — the file view and preview follow whatever it edits; html/md render live as they are written (any manual browsing stops it)",
   '文件跟随': 'Follow files',
   '绑定的终端已关闭，文件跟随已停': 'The bound terminal was closed — follow stopped',
@@ -372,6 +378,10 @@ window.FANBOX_DICT = {
 };
 // 含插值的动态文案：正则 → 替换式（$1 等捕获组），EN 模式下逐条尝试
 window.FANBOX_DICT_RULES = [
+  // agent 启动按钮（动态生成的 title/toast）
+  [/^启动 (.+)：空闲终端就地启动，正跑着任务则新开标签$/, (m) => `Launch ${m[1]}: starts in the idle terminal, or opens a new tab if one is busy`],
+  [/^打开 (.+) 桌面应用（该产品无终端 CLI 形态）$/, (m) => `Open the ${m[1]} desktop app (no terminal CLI available)`],
+  [/^点击复制安装命令：(.+)$/, (m) => `Click to copy the install command: ${m[1]}`],
   // 状态栏：N 项 · N 文件夹 · N 文件 大小
   [/^(\d+) 项( · (\d+) 文件夹)?( · (\d+) 文件 (.+))?$/, (m) => `${m[1]} items${m[3] ? ` · ${m[3]} folders` : ''}${m[5] ? ` · ${m[5]} files ${m[6]}` : ''}`],
   // 压缩包条目数：123 项 / 500+ 项
