@@ -2081,8 +2081,9 @@ const AGENT_REGISTRY = [
   { id: 'opencode', label: 'opencode', cmd: 'opencode', bin: 'opencode', install: 'curl -fsSL https://opencode.ai/install | bash' },
   { id: 'pi', label: 'pi', cmd: 'pi', bin: 'pi', install: 'curl -fsSL https://pi.dev/install.sh | sh' },
   { id: 'codebuddy', label: 'CodeBuddy', cmd: 'codebuddy', bin: 'codebuddy', install: 'npm install -g @tencent-ai/codebuddy-code' },
-  { id: 'workbuddy', label: 'WorkBuddy', cmd: 'open -a WorkBuddy', app: 'WorkBuddy', install: 'https://codebuddy.cn/work （桌面应用，官网下载）' },
+  { id: 'workbuddy', label: 'WorkBuddy', cmd: 'workbuddy', bin: 'workbuddy', app: 'WorkBuddy', install: 'https://codebuddy.cn/work （桌面应用，官网下载）' },
   { id: 'qoder', label: 'Qoder CLI', cmd: 'qodercli', bin: 'qodercli', install: 'curl -fsSL https://qoder.com/install | bash' },
+  { id: 'codewhale', label: 'CodeWhale', cmd: 'codewhale', bin: 'codewhale', install: 'https://codewhale.ai （桌面应用，官网下载）' },
 ];
 const AGENT_DEFAULTS = ['claude', 'codex'];
 const agentState = { enabled: null, custom: [] };

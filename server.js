@@ -2342,9 +2342,9 @@ const server = http.createServer(async (req, res) => {
         ...bins.map(async (b) => { out[b] = !!(await findAgentBin(b)); }),
         ...apps.map((a) => new Promise((resolve) => {
           if (PLATFORM === 'win32') {
-            // Windows：where 搜 PATH → 检查 Program Files / LocalAppData 常见安装路径
+            // Windows：where 搜 PATH → 检查 Program Files / LocalAppData / AppData 常见安装路径
             const safe = a.replace(/"/g, ''); // 正则已过白，双保险去引号
-            const script = `@echo off\r\nwhere "${safe}.exe" 2>nul 1>nul && echo 1 && exit /b\r\nwhere "${safe}" 2>nul 1>nul && echo 1 && exit /b\r\nif exist "%ProgramFiles%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%ProgramFiles(x86)%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%LocalAppData%\\\\Programs\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\necho 0`;
+            const script = `@echo off\r\nwhere "${safe}.exe" 2>nul 1>nul && echo 1 && exit /b\r\nwhere "${safe}" 2>nul 1>nul && echo 1 && exit /b\r\nif exist "%ProgramFiles%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%ProgramFiles(x86)%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%LocalAppData%\\\\Programs\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%AppData%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%LocalAppData%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\necho 0`;
             execFile('cmd', ['/c', script], { timeout: 8000 }, (err, stdout) => {
               out[a] = !err && String(stdout).trim() === '1';
               resolve();
