@@ -2503,16 +2503,17 @@ const term = {
     // WebGL 渲染加速（大输出/TUI 不掉帧），失败或上下文丢失回退 DOM
     // 诊断开关：控制台跑 fbWebgl(false) 关掉 WebGL（用 DOM renderer）排查 CJK 残影乱码，fbWebgl(true) 恢复，需新开标签生效
     const webglOff = (() => { try { return localStorage.getItem('fanbox.noWebgl') === '1'; } catch { return false; } })();
+    let wg = null; // 存到 session 上，换肤/字号/resize 时清图集修 CJK 残影乱码（#37/#45）
     if (!webglOff && !window.__noWebgl && window.WebglAddon) {
       try {
         const Wg = window.WebglAddon.WebglAddon || window.WebglAddon;
-        const wg = new Wg();
+        wg = new Wg();
         wg.onContextLoss(() => { try { wg.dispose(); } catch { /* */ } });
         xterm.loadAddon(wg);
-      } catch { /* 回退默认 DOM renderer */ }
+      } catch { wg = null; /* 回退默认 DOM renderer */ }
     }
     if (fit) try { fit.fit(); } catch { /* */ }
-    const sess = { id, xterm, fit, host, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
+    const sess = { id, xterm, fit, host, webgl: wg, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
@@ -2803,7 +2804,9 @@ const term = {
       bar.appendChild(t);
     });
   },
-  retheme() { const th = this.theme(); this.sessions.forEach((s) => { s.xterm.options.theme = th; }); },
+  // 换主题后 WebGL 图集里缓存的还是旧配色字形，且 CJK 宽字符偶发图集损坏（#37/#45）：清一次图集强制重栅格化。
+  // try/catch 兜住 GPU 故障，别让单个 session 的渲染异常连累其它 session 或拖垮渲染进程（#35）。
+  retheme() { const th = this.theme(); this.sessions.forEach((s) => { try { s.xterm.options.theme = th; s.webgl?.clearTextureAtlas?.(); } catch { /* */ } }); },
 };
 
 // ---------- Agent 用量面板（侧栏常驻，可开合）----------
@@ -3554,7 +3557,8 @@ function renderFollowNarration() {
   if (busy && action) main = action;
   else if (busy && follow.path) main = (isFollowArtifact(baseOf(follow.path)) ? '生成 ' : '写 ') + baseOf(follow.path);
   else if (action && action !== '思考中…') main = action; // 刚停手，留住最后动作
-  else { main = follow.path ? '停在 ' + baseOf(follow.path) : ''; live = false; }
+  // 跟随已开但绑的终端还没写文件：明说「等待…」，别把旁白栏藏起来让用户以为跟随坏了（#30）
+  else { main = follow.path ? '停在 ' + baseOf(follow.path) : (follow.label ? `等待「${follow.label}」写文件…` : '等待 agent 写文件…'); live = false; }
   if (!main) { el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
   const lead = live ? 'agent 正在 ' : '';

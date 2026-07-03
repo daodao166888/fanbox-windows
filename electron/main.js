@@ -67,7 +67,11 @@ function createWindow() {
   const remember = () => { clearTimeout(bt); bt = setTimeout(saveBounds, 400); };
   win.on('resize', remember);
   win.on('move', remember);
-  win.on('close', saveBounds);
+  // macOS：点左上角红叉只隐藏到 Dock（保活渲染进程，所有界面/终端状态原样保留），真正退出走 ⌘Q。
+  win.on('close', (e) => {
+    saveBounds();
+    if (process.platform === 'darwin' && !isQuitting) { e.preventDefault(); win.hide(); }
+  });
 
   // 等后端起来再加载（首次 listen 有几十毫秒延迟）
   const load = () => win.loadURL(`http://localhost:${PORT}`).catch(() => setTimeout(load, 150));
@@ -270,11 +274,15 @@ function buildMenu() {
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
-app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  else if (win && !win.isDestroyed()) { win.show(); win.focus(); } // 从 Dock 点回来：显示隐藏的窗口，状态原样还在
+});
 // ⌘Q 兜底：还有终端在跑时（agent 任务），退出前确认，避免手滑全灭
 let quitConfirmed = false;
+let isQuitting = false; // 真正退出（⌘Q / 菜单退出）才置真；点红叉只隐藏不退出，见 win.on('close')
 app.on('before-quit', (e) => {
-  if (quitConfirmed || terminals.size === 0) return;
+  if (quitConfirmed || terminals.size === 0) { isQuitting = true; return; }
   e.preventDefault();
   const choice = dialog.showMessageBoxSync(win && !win.isDestroyed() ? win : undefined, {
     type: 'warning',
@@ -284,7 +292,7 @@ app.on('before-quit', (e) => {
     message: M(`还有 ${terminals.size} 个终端会话在运行`, `${terminals.size} terminal session(s) still running`),
     detail: M('退出会终止正在运行的 agent 任务，确定退出？', 'Quitting will terminate running agent tasks. Quit anyway?'),
   });
-  if (choice === 1) { quitConfirmed = true; app.quit(); }
+  if (choice === 1) { quitConfirmed = true; isQuitting = true; app.quit(); }
 });
 app.on('window-all-closed', () => {
   terminals.forEach((p) => { try { p.kill(); } catch { /* */ } });
