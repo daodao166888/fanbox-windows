@@ -1137,9 +1137,12 @@ function snapEligible(project) {
   if (base) {
     const segs = path.relative(base, p).split(path.sep);
     // ~/Documents 这类系统大目录整层不给存（自定义的 ~/myproj 一层目录放行）
-    const SYS = new Set(['Documents', 'Desktop', 'Downloads', 'Pictures', 'Movies', 'Music', 'Public', 'Applications', 'Library', '.Trash']);
+    // Windows 额外排除 AppData、Videos、Searches 等系统/大数据目录
+    const SYS = new Set(['Documents', 'Desktop', 'Downloads', 'Pictures', 'Movies', 'Music', 'Videos',
+      'Public', 'Applications', 'AppData', 'OneDrive', 'Searches', 'Contacts', 'Favorites', 'Links',
+      'Saved Games', 'Library', '.Trash']);
     if (segs.length === 1 && SYS.has(segs[0])) return false;
-    if (segs[0] === 'Library' || segs[0] === '.Trash') return false;
+    if (segs[0] === 'Library' || segs[0] === '.Trash' || segs[0] === 'AppData') return false;
   } else if (p.split(path.sep).filter(Boolean).length < 2) return false; // / 下一层（/tmp 等）不收
   try { return fs.statSync(p).isDirectory(); } catch { return false; }
 }
