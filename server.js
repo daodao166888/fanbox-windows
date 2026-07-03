@@ -1097,6 +1097,160 @@ async function gitFileDiff(p) {
   return { isRepo: true, diffable: true, root, rel, original: head.ok ? head.stdout : '', modified, isNew: !head.ok };
 }
 
+// ---------- 回合安全带：影子 git 快照 + 一键回滚 ----------
+// agent 每次开工前静默存档。GIT_DIR 放 ~/.fanbox/snapshots/<hash>/，项目文件夹里不落任何东西，
+// 对用户自己的 git 仓库零干扰；非 git 项目从此也有 diff 基准和「回到上一轮之前」。
+// 每个快照 = commit + tag（tag 保引用，回滚 reset 后历史不丢），tag 滚动裁剪控制磁盘。
+const SNAP_ROOT = path.join(CONFIG_DIR, 'snapshots');
+const SNAP_INDEX = path.join(SNAP_ROOT, 'index.json');
+const SNAP_KEEP = 40; // 每项目保留的快照数
+const SNAP_EXCLUDE = [
+  'node_modules/', '.git/', 'dist/', 'build/', 'out/', '.next/', '.nuxt/', '.cache/',
+  '.venv/', 'venv/', '__pycache__/', 'target/', 'Pods/', 'DerivedData/', '.gradle/',
+  '.DS_Store', '*.dmg', '*.iso', '*.mp4', '*.mov', '*.avi', '*.mkv',
+].join('\n') + '\n';
+const snapThrottle = new Map(); // project → 上次尝试 ms（15s 内不重复扫）
+const snapDead = new Set();     // 本次运行内放弃的目录（太大/超时），别每轮都撞一次
+// 符号链接归一化：/tmp → /private/tmp 这类别名会让 cwd 和 HOME 字符串对不上、绕过资格守卫
+const snapReal = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+
+function snapGitDir(project) {
+  return path.join(SNAP_ROOT, crypto.createHash('sha1').update(project).digest('hex').slice(0, 16));
+}
+function execSnap(gitDir, project, args, timeout = 10000) {
+  return new Promise((resolve) => {
+    execFile('git', ['--git-dir', gitDir, '--work-tree', project, ...args],
+      { cwd: project, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+        resolve({ ok: !err, killed: !!(err && err.killed), stdout: stdout || '', stderr: stderr || '' });
+      });
+  });
+}
+// 快照资格：拒掉家目录本身、~/Documents 这类一层大目录、Library/废纸篓/.fanbox 自己
+// 传入的 project 必须已经 snapReal 归一化（snapshot() 入口统一做）
+function snapEligible(project) {
+  if (!project || !path.isAbsolute(project)) return false;
+  const p = path.normalize(project).replace(/\/+$/, '');
+  const realHome = snapReal(HOME);
+  if (!p || p === '/' || p === HOME || p === realHome) return false;
+  if (p.startsWith(CONFIG_DIR) || p.startsWith(snapReal(CONFIG_DIR))) return false;
+  const base = [realHome, HOME].find((h) => p.startsWith(h + path.sep));
+  if (base) {
+    const segs = path.relative(base, p).split(path.sep);
+    // ~/Documents 这类系统大目录整层不给存（自定义的 ~/myproj 一层目录放行）
+    const SYS = new Set(['Documents', 'Desktop', 'Downloads', 'Pictures', 'Movies', 'Music', 'Public', 'Applications', 'Library', '.Trash']);
+    if (segs.length === 1 && SYS.has(segs[0])) return false;
+    if (segs[0] === 'Library' || segs[0] === '.Trash') return false;
+  } else if (p.split(path.sep).filter(Boolean).length < 2) return false; // / 下一层（/tmp 等）不收
+  try { return fs.statSync(p).isDirectory(); } catch { return false; }
+}
+async function snapEnsureRepo(project) {
+  const gitDir = snapGitDir(project);
+  if (!fs.existsSync(path.join(gitDir, 'HEAD'))) {
+    await fsp.mkdir(gitDir, { recursive: true }).catch(() => {}); // git init 不建父目录
+    const r = await execSnap(gitDir, project, ['init', '-q']);
+    if (!r.ok) return null;
+    await fsp.writeFile(path.join(gitDir, 'info', 'exclude'), SNAP_EXCLUDE).catch(() => {});
+    // 登记 hash→项目路径，供「文件在哪个影子仓库」反查
+    try {
+      const idx = JSON.parse(await fsp.readFile(SNAP_INDEX, 'utf8').catch(() => '{}'));
+      idx[path.basename(gitDir)] = project;
+      await fsp.writeFile(SNAP_INDEX, JSON.stringify(idx, null, 2));
+    } catch { /* 索引坏了不挡快照 */ }
+  }
+  return gitDir;
+}
+// 打一个快照：无变化不建 commit（天然去重），add 超时视为项目太大、本次运行内放弃
+async function snapshot(project, label) {
+  project = snapReal(path.normalize(resolvePath(project)).replace(/\/+$/, ''));
+  if (!snapEligible(project)) return { ok: false, skipped: 'ineligible' };
+  if (snapDead.has(project)) return { ok: false, skipped: 'dead' };
+  const last = snapThrottle.get(project) || 0;
+  if (Date.now() - last < 15000) return { ok: true, skipped: 'throttled' };
+  snapThrottle.set(project, Date.now());
+  const gitDir = await snapEnsureRepo(project);
+  if (!gitDir) return { ok: false, skipped: 'init-failed' };
+  const add = await execSnap(gitDir, project, ['add', '-A'], 25000);
+  if (!add.ok) {
+    if (add.killed) snapDead.add(project); // 超时 = 太大，别再试
+    return { ok: false, skipped: add.killed ? 'too-big' : 'add-failed' };
+  }
+  const msg = String(label || '回合存档').slice(0, 120);
+  const ci = await execSnap(gitDir, project, [
+    '-c', 'user.name=FanBox', '-c', 'user.email=snapshot@fanbox.local', '-c', 'commit.gpgsign=false',
+    'commit', '-q', '--no-verify', '-m', msg,
+  ], 20000);
+  if (!ci.ok) return { ok: true, skipped: 'no-change' }; // 与上个快照无差异
+  await execSnap(gitDir, project, ['tag', `s${Date.now()}`]);
+  // tag 滚动裁剪：超出 SNAP_KEEP 删最旧，gc 交给 git 自己看着办
+  const tags = (await execSnap(gitDir, project, ['tag', '-l', 's*'])).stdout.split('\n').filter(Boolean).sort();
+  if (tags.length > SNAP_KEEP) {
+    await execSnap(gitDir, project, ['tag', '-d', ...tags.slice(0, tags.length - SNAP_KEEP)]);
+    execSnap(gitDir, project, ['gc', '--auto', '-q'], 60000); // 不 await，后台随缘
+  }
+  return { ok: true, created: true };
+}
+// 列出某目录的快照：精确命中或该目录在某个已存档项目内（取最长前缀）
+async function snapResolveProject(p) {
+  const norm = snapReal(path.normalize(resolvePath(p)).replace(/\/+$/, ''));
+  let idx = {};
+  try { idx = JSON.parse(await fsp.readFile(SNAP_INDEX, 'utf8')); } catch { return null; }
+  let best = null;
+  for (const proj of Object.values(idx)) {
+    if ((norm === proj || norm.startsWith(proj + path.sep)) && (!best || proj.length > best.length)) {
+      if (fs.existsSync(path.join(snapGitDir(proj), 'HEAD'))) best = proj;
+    }
+  }
+  return best;
+}
+async function snapList(p) {
+  const project = await snapResolveProject(p);
+  if (!project) return { ok: true, project: null, snaps: [] };
+  const gitDir = snapGitDir(project);
+  const r = await execSnap(gitDir, project, [
+    'for-each-ref', 'refs/tags/s*', '--sort=-creatordate',
+    '--format=%(objectname)%09%(creatordate:unix)%09%(subject)',
+  ]);
+  const snaps = r.stdout.split('\n').filter(Boolean).map((line) => {
+    const [hash, ts, ...rest] = line.split('\t');
+    return { hash, ts: Number(ts) * 1000, label: rest.join('\t') };
+  });
+  return { ok: true, project, snaps };
+}
+// 回滚：先把当前状态自动存一份（回滚本身永远可撤销），再 reset --hard 到目标快照
+async function snapRestore(p, hash) {
+  const project = await snapResolveProject(p);
+  if (!project) return { ok: false, error: '这个目录还没有存档' };
+  if (!/^[0-9a-f]{7,40}$/i.test(String(hash || ''))) return { ok: false, error: '无效的快照标识' };
+  const gitDir = snapGitDir(project);
+  const has = await execSnap(gitDir, project, ['cat-file', '-e', `${hash}^{commit}`]);
+  if (!has.ok) return { ok: false, error: '找不到这个快照' };
+  snapThrottle.delete(project); // 安全存档绝不能被节流吞掉：没备份就 reset 等于毁数据
+  const backup = await snapshot(project, '回滚前自动存档'); // 无变化时静默跳过，正合适
+  if (!backup.ok) return { ok: false, error: '当前状态存档失败，为安全起见不执行恢复' };
+  const r = await execSnap(gitDir, project, ['reset', '--hard', hash, '-q'], 60000);
+  snapThrottle.delete(project); // 回滚后下一轮 agent 开工要能立刻存档
+  if (!r.ok) return { ok: false, error: '恢复失败：' + (r.stderr || '').slice(0, 200) };
+  return { ok: true, project };
+}
+// 影子 diff：文件不在 git 仓库时，以「上一回合快照」为基准出 original
+async function snapFileDiff(file) {
+  file = snapReal(file); // 项目路径是 realpath 存的，文件也归一化才能算出正确的相对路径
+  const project = await snapResolveProject(path.dirname(file));
+  if (!project) return null;
+  const gitDir = snapGitDir(project);
+  const head = await execSnap(gitDir, project, ['log', '-1', '--format=%ct']);
+  if (!head.ok) return null;
+  const rel = path.relative(project, file).split(path.sep).join('/');
+  const show = await execSnap(gitDir, project, ['show', `HEAD:${rel}`]);
+  let modified = '';
+  try { modified = await fsp.readFile(file, 'utf8'); } catch { modified = ''; }
+  return {
+    isRepo: false, shadow: true, diffable: true, root: project, rel,
+    baseTs: Number(head.stdout.trim()) * 1000,
+    original: show.ok ? show.stdout : '', modified, isNew: !show.ok,
+  };
+}
+
 // 图片编辑保存：前端 canvas 导出 dataURL（已含格式/尺寸/质量/标注），这里原子写回
 async function saveImage({ path: target, dataUrl, newName }) {
   const m = /^data:image\/\w+;base64,(.+)$/s.exec(dataUrl || '');
@@ -2072,7 +2226,24 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, await gitStatus(qp.get('path') || HOME));
     }
     if (p === '/api/git-file') {
-      return sendJSON(res, 200, await gitFileDiff(qp.get('path')));
+      const d = await gitFileDiff(qp.get('path'));
+      // 不在 git 仓库 → 退回影子快照当基准，「看清改了哪几行」覆盖所有文件夹
+      if (!d.isRepo && !d.shadow) {
+        const s = await snapFileDiff(resolvePath(qp.get('path'))).catch(() => null);
+        if (s) return sendJSON(res, 200, s);
+      }
+      return sendJSON(res, 200, d);
+    }
+    if (p === '/api/snapshot' && req.method === 'POST') {
+      const b = await readBody(req);
+      return sendJSON(res, 200, await snapshot(b.path, b.label));
+    }
+    if (p === '/api/snapshots') {
+      return sendJSON(res, 200, await snapList(qp.get('path')));
+    }
+    if (p === '/api/snapshot-restore' && req.method === 'POST') {
+      const b = await readBody(req);
+      return sendJSON(res, 200, await snapRestore(b.path, b.hash));
     }
     if (p === '/api/open' && req.method === 'POST') {
       const body = await readBody(req);

@@ -61,8 +61,8 @@
   };
   window.t = tr;
 
-  // 用户内容区不翻译：文件预览正文、三种编辑器、终端、灯箱
-  const SKIP = '#preview-body, #ed-host, .xterm, .milkdown, .lightbox, .cp-name, .cp-dir';
+  // 用户内容区不翻译：文件预览正文、三种编辑器、终端、灯箱、回合存档标签（含终端标题）
+  const SKIP = '#preview-body, #ed-host, .xterm, .milkdown, .lightbox, .cp-name, .cp-dir, .snap-lb';
   const ATTRS = ['title', 'placeholder'];
   const visit = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {

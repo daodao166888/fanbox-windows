@@ -357,9 +357,10 @@ function renderStatusbar() {
   const files = list.length - dirs;
   const bytes = list.reduce((a, e) => a + (e.isDir ? 0 : e.size || 0), 0);
   sb.classList.remove('hidden');
-  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
+  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-snap" title="agent 每轮开工前的自动存档，可一键回到任意一轮之前">回合存档</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
   $('#sb-du').onclick = () => diskPanel(state.cwd);
   $('#sb-mem').onclick = () => memoryPanel(state.cwd);
+  $('#sb-snap').onclick = () => snapshotPanel(state.cwd);
   const rel = $('#sb-rel'); if (rel) rel.onclick = () => releasePanel();
 }
 function renderFiles() {
@@ -683,9 +684,9 @@ function renderHtmlPreview(data, meta) {
 async function showDiff(e) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   const data = await api('/api/git-file?path=' + encodeURIComponent(e.path));
-  if (!data.isRepo) { toast('该文件不在 git 仓库里', true); return; }
+  if (!data.isRepo && !data.shadow) { toast('该文件不在 git 仓库里，也还没有回合存档（跑过 agent 就有了）', true); return; }
   if (!data.diffable) { toast('该类型不支持 diff', true); return; }
-  if (!data.isNew && (data.original || '') === (data.modified || '')) { toast('与 HEAD 无差异'); return; }
+  if (!data.isNew && (data.original || '') === (data.modified || '')) { toast(data.shadow ? '与上一回合存档无差异' : '与 HEAD 无差异'); return; }
   if (!await mona.load()) { toast('编辑器未就绪', true); return; }
   if (!await guardDirty()) return;
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
@@ -696,7 +697,7 @@ async function showDiff(e) {
   renderPreviewFoot(e);
   const body = $('#preview-body');
   body.innerHTML =
-    `<div class="editor-bar"><span class="editor-hint">${data.isNew ? '新文件（HEAD 中不存在）' : '左：HEAD　·　右：当前工作区'} · 只读</span><button id="diff-close" class="ghost-btn">返回预览</button></div>` +
+    `<div class="editor-bar"><span class="editor-hint">${data.isNew ? (data.shadow ? '新文件（上一回合存档时还没有）' : '新文件（HEAD 中不存在）') : (data.shadow ? `左：回合存档（${fmtTime(data.baseTs)}）　·　右：当前` : '左：HEAD　·　右：当前工作区')} · 只读</span><button id="diff-close" class="ghost-btn">返回预览</button></div>` +
     `<div id="ed-host" class="mona-host"></div>`;
   mona.openDiff($('#ed-host'), data.original, data.modified, (e.name.split('.').pop() || '').toLowerCase());
   $('#diff-close').onclick = () => openPreview(e);
@@ -1540,6 +1541,60 @@ async function memoryPanel(dirPath) {
       await navigate(dirOf(p));
       const e = state.entries.find((x) => x.path === p);
       if (e) { state.selected = p; openPreview(e); renderFiles(); }
+    };
+  });
+}
+
+// 回合存档：agent 每轮开工前的自动快照列表 + 一键回滚。
+// 「AI 弄坏了东西怎么办」从一种恐惧变成一个按钮：回滚前会再自动存一份，回滚本身也能滚回来
+async function snapshotPanel(dirPath) {
+  const old = $('.snap-overlay'); if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'input-overlay snap-overlay';
+  ov.innerHTML = `<div class="input-dialog snap-dialog">
+    <div class="input-title">回合存档 · ${escapeHtml(dirPath.replace(state.home, '~'))}</div>
+    <div class="snap-body"><div class="cmdk-loading">读存档中…</div></div></div>`;
+  document.body.appendChild(ov);
+  const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+  const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  ov.onclick = (ev) => { if (ev.target === ov) close(); };
+  document.addEventListener('keydown', onKey, true);
+  const d = await api('/api/snapshots?path=' + encodeURIComponent(dirPath));
+  const body = ov.querySelector('.snap-body');
+  if (!d.project || !d.snaps.length) {
+    body.innerHTML = '<div class="empty-state">这个文件夹还没有存档<br><br><span class="usage-sub">在内嵌终端里跑 agent 时，每轮开工前会自动存一份，坏了随时能回来</span></div>';
+    return;
+  }
+  const clock = (ts) => {
+    const t = new Date(ts); const hm = `${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`;
+    return t.toDateString() === new Date().toDateString() ? hm : `${t.getMonth() + 1}/${t.getDate()} ${hm}`;
+  };
+  const projName = baseOf(d.project);
+  body.innerHTML = `<div class="snap-hint">每一条都是当时整个项目的完整状态。恢复前会自动把当前状态也存一份，随时能再滚回来。</div>` +
+    d.snaps.map((s, i) => `
+    <div class="snap-row">
+      <span class="snap-time" title="${new Date(s.ts).toLocaleString()}">${clock(s.ts)}</span>
+      <span class="snap-lb">${escapeHtml(s.label)}${i === 0 ? '<i class="snap-latest">最新</i>' : ''}</span>
+      <span class="snap-ago">${fmtTime(s.ts)}</span>
+      <button class="ghost-btn snap-restore" data-i="${i}">回到这时</button>
+    </div>`).join('');
+  body.querySelectorAll('.snap-restore').forEach((b) => {
+    b.onclick = async () => {
+      const s = d.snaps[Number(b.dataset.i)];
+      // agent 正在这个项目里干活时不给回滚：一边写一边恢复只会两败俱伤
+      let busy = false;
+      term.sessions.forEach((t) => {
+        const c = t.cwd || t.startDir || '';
+        if (!t.dead && t.status === 'busy' && (c === d.project || c.startsWith(d.project + '/') || d.project.startsWith(c + '/'))) busy = true;
+      });
+      if (busy) { toast('这个项目的 agent 正在干活，先等它停下（或按 Esc 打断）再恢复', true); return; }
+      if (!await confirmDialog(`把「${projName}」整个恢复到 ${clock(s.ts)} 存档时的样子？之后的改动会被移除（当前状态已自动存档，可再滚回来）`)) return;
+      b.disabled = true; b.textContent = '恢复中…';
+      const r = await apiPost('/api/snapshot-restore', { path: d.project, hash: s.hash });
+      if (!r.ok) { toast(r.error || '恢复失败', true); b.disabled = false; b.textContent = '回到这时'; return; }
+      close();
+      toast(`已恢复到 ${clock(s.ts)} · 恢复前的状态也存了一份`);
+      navigate(state.cwd);
     };
   });
 }
@@ -2842,9 +2897,14 @@ const term = {
     // 续命只刷新 lastData（推迟评估时机），不刷新 lastReal（任务时长只数自发输出，打字不算工时）
     if (now - (s.lastInput || 0) < 400) { if (s.status === 'busy') s.lastData = now; return; }
     s.lastData = now; s.lastReal = now;
-    if (s.status !== 'busy') { s.status = 'busy'; s.busyStart = now; this.renderTabs(); }
+    if (s.status !== 'busy') { s.status = 'busy'; s.busyStart = now; this.renderTabs(); this.roundSnapshot(s); }
     if (s.id !== this.active) { if (!s.unread) { s.unread = true; this.renderTabs(); } }
     this.ensureStatusTick();
+  },
+  // 回合安全带：agent 开工瞬间给项目静默存档。资格/节流/判重全在服务端，这里只管扔，失败不打扰
+  roundSnapshot(s) {
+    const dir = s.cwd || s.startDir;
+    if (dir) apiPost('/api/snapshot', { path: dir, label: '回合 · ' + (s.title || 'shell') }).catch(() => {});
   },
   // 取缓冲区末尾 n 行纯文本：确认对话框和忙碌页脚都画在底部
   tailText(s, n = 25) {
