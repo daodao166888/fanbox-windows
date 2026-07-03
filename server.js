@@ -2329,7 +2329,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { enabled: Array.isArray(cfg.enabledAgents) ? cfg.enabledAgents : null, custom });
     }
     if (p === '/api/agents/which') {
-      // 装没装探测：bins 走登录 shell command -v；apps 是桌面应用，走 open -Ra
+      // 装没装探测：bins 走登录 shell command -v / Windows where；apps 是桌面应用，macOS 走 open -Ra，Windows 走 where + 常见安装路径
       const out = {};
       const bins = String(url.searchParams.get('bins') || '').split(',')
         .map((s) => s.trim()).filter((s) => /^[A-Za-z0-9._-]{1,64}$/.test(s)).slice(0, 32);
@@ -2338,7 +2338,17 @@ const server = http.createServer(async (req, res) => {
       await Promise.all([
         ...bins.map(async (b) => { out[b] = !!(await findAgentBin(b)); }),
         ...apps.map((a) => new Promise((resolve) => {
-          execFile('/usr/bin/open', ['-Ra', a], { timeout: 8000 }, (err) => { out[a] = !err; resolve(); });
+          if (PLATFORM === 'win32') {
+            // Windows：where 搜 PATH → 检查 Program Files / LocalAppData 常见安装路径
+            const safe = a.replace(/"/g, ''); // 正则已过白，双保险去引号
+            const script = `@echo off\r\nwhere "${safe}.exe" 2>nul 1>nul && echo 1 && exit /b\r\nwhere "${safe}" 2>nul 1>nul && echo 1 && exit /b\r\nif exist "%ProgramFiles%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%ProgramFiles(x86)%\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\nif exist "%LocalAppData%\\\\Programs\\\\${safe}\\\\${safe}.exe" (echo 1 & exit /b)\r\necho 0`;
+            execFile('cmd', ['/c', script], { timeout: 8000 }, (err, stdout) => {
+              out[a] = !err && String(stdout).trim() === '1';
+              resolve();
+            });
+          } else {
+            execFile('/usr/bin/open', ['-Ra', a], { timeout: 8000 }, (err) => { out[a] = !err; resolve(); });
+          }
         })),
       ]);
       return sendJSON(res, 200, out);
