@@ -2,6 +2,7 @@
 // FanBox 界面词典：中文原文 → 英文。由 i18n.js 消费；缺词条时英文界面回退显示中文。
 window.FANBOX_DICT = {
   // ---------- 侧栏 ----------
+  'Coding Agent的驾驶舱': 'The cockpit for coding agents',
   '搜索全部文件': 'Search all files',
   '快速入口': 'Quick access',
   '收藏': 'Favorites',

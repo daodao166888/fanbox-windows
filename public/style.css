@@ -895,6 +895,7 @@ kbd {
 /* agent 启动入口设置面板（#38） */
 .agents-pop { position: fixed; z-index: 200; width: 300px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,0.32); overflow: hidden; }
 .agents-pop .ap-head { padding: 9px 12px; font-size: 12px; font-weight: 600; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+.agents-pop .ap-head.ap-sub { border-top: 1px solid var(--border); border-bottom: none; }
 .agents-pop .ap-list { overflow-y: auto; max-height: 46vh; padding: 4px 0; }
 .agents-pop .ap-row { display: flex; align-items: center; gap: 9px; padding: 6px 12px; cursor: pointer; font-size: 13px; color: var(--text); }
 .agents-pop .ap-row:hover { background: var(--bg-3); }
@@ -906,6 +907,9 @@ kbd {
 .agents-pop .ap-foot { padding: 8px 12px; font-size: 11px; color: var(--text-dim); border-top: 1px solid var(--border); line-height: 1.7; }
 
 #xterm-host { flex: 1; position: relative; min-height: 0; overflow: hidden; background: var(--bg); }
+/* xterm 6.0 的 Viewport 重写后不再用 JS 把 .xterm-viewport 刷成主题色，xterm.css 默认的 #000
+   会在行区底部的余高缝隙里露出来（黑带横跳）——改透明，让容器背景（皮肤色/回放录制色）透上来 */
+.xterm .xterm-viewport { background-color: transparent !important; }
 .xterm-instance { position: absolute; inset: 4px 2px 2px 8px; display: none; }
 .xterm-instance.show { display: block; }
 .xterm-instance .xterm { height: 100%; }

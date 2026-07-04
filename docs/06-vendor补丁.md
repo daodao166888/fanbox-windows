@@ -1,8 +1,10 @@
 # vendor 补丁记录
 
-vendor 目录的文件是从 node_modules 手工拷出来的。重拷/升级前先看这里，否则补丁会被静默覆盖（`npm run dist` 前有 `predist` 守卫会拦住）。
+vendor 目录的文件是从 node_modules 手工拷出来的。重拷/升级前先看这里，否则补丁会被静默覆盖。
 
-## public/vendor/xterm/xterm.js — CapsLock 输入法双写修复
+**当前状态（2026-07）：无在役补丁。** vendor/xterm 已升级到 @xterm/xterm 6.0.0 + addon-webgl 0.19.0 + addon-fit 0.11.0（为修 WebGL 字形图集致中文乱码），下面的 CapsLock 补丁已被上游 6.0.0 原生包含，按退场条件删除了补丁、文件头注释和 `check:vendor-patch`/`predist` 守卫。
+
+## 【已退役】public/vendor/xterm/xterm.js — CapsLock 输入法双写修复
 
 - **症状**：中文输入法 composition 进行中（如连打拼音 yaoda 未选字）按 CapsLock 切中英，落下「yao dayaoda」双写。
 - **根因**：xterm 5.5.0 的 CompositionHelper.keydown 豁免名单只有 229 和 16/17/18，CapsLock(20) 会立即 finalizeComposition(false) 把候选框文本「yao da」当数据发出，随后输入法又正常提交「yaoda」。

@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "2.5.0-win",
+  "version": "2.6.0-win",
   "description": "FanBox — the cockpit for coding agents. Command Claude Code or Codex, watch every file and line they change, and take over anytime.",
   "bin": {
     "fanbox": "server.js"
@@ -13,9 +13,8 @@
     "postinstall": "node scripts/postinstall.js",
     "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
     "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
-    "check:vendor-patch": "grep -q '20===e.keyCode||229===e.keyCode' public/vendor/xterm/xterm.js",
-    "predist": "npm run check:vendor-patch",
-    "dist": "electron-builder --mac",
+    "dist": "APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --arm64",
+    "dist:x64": "PTY_ARCH=x64 npm run rebuild:pty && APPLE_KEYCHAIN_PROFILE=fanbox-notary electron-builder --mac --x64 && PTY_ARCH=arm64 npm run rebuild:pty",
     "dist:win": "electron-builder --win"
   },
   "build": {
@@ -76,11 +75,13 @@
     "node": ">=18"
   },
   "dependencies": {
-    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-clipboard": "^0.2.0",
+    "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-unicode11": "^0.9.0",
-    "@xterm/addon-webgl": "^0.18.0",
-    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-webgl": "^0.19.0",
+    "@xterm/xterm": "^6.0.0",
     "node-pty": "^1.1.0",
+    "qrcode": "^1.5.4",
     "sharp": "^0.35.1"
   },
   "devDependencies": {
