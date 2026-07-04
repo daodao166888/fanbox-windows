@@ -1792,6 +1792,18 @@ async function agentProjects() {
   const map = new Map(); // cwd -> { lastActive, agents: Set }
   const add = (cwd, t, agent) => {
     if (!cwd || cwd === HOME) return; // 在家目录裸跑的会话不算「项目」
+    // 排除系统目录和用户数据目录（非代码项目的杂音）
+    const norm = path.normalize(cwd).replace(/[\\/]+$/, '');
+    const SKIP_PROJ = new Set([
+      path.join(HOME, 'AppData'), path.join(HOME, 'Library'), path.join(HOME, '.Trash'),
+      path.join(HOME, 'Desktop'), path.join(HOME, 'Downloads'),
+      path.join(HOME, 'Pictures'), path.join(HOME, 'Music'), path.join(HOME, 'Videos'),
+    ]);
+    if ([
+      path.resolve('C:\\Windows'), path.resolve('C:\\WINDOWS'),
+      path.resolve('/System'), path.resolve('/usr'), path.resolve('/bin'), path.resolve('/sbin'),
+    ].some((sys) => norm === sys || norm.startsWith(sys + path.sep))) return;
+    for (const s of SKIP_PROJ) { if (norm === s || norm.startsWith(s + path.sep)) return; }
     const cur = map.get(cwd) || { lastActive: 0, agents: new Set() };
     cur.lastActive = Math.max(cur.lastActive, t);
     cur.agents.add(agent);
