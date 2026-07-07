@@ -2878,13 +2878,14 @@ const term = {
     requestAnimationFrame(() => { try { s.fit.fit(); } catch { /* */ } });
   },
   // WebGL 字形图集保养：大量中文输出会撑满图集触发分页合并，上游 bug 让汉字画成别字碎片
-  //（拖拽窗口能复原＝resize 重建了图集）。忙时每 5 分钟、收工时距上次 >60s 主动重建，重画一帧无感
-  atlasCare(s, now, eager) {
-    if (!s.webgl) return;
-    if (!s._atlasAt) { s._atlasAt = now; return; } // 新会话图集是干净的，先记时间
-    if (now - s._atlasAt < (eager ? 60000 : 300000)) return;
-    s._atlasAt = now;
-    try { s.webgl.clearTextureAtlas(); } catch { /* */ }
+  //（拖拽窗口能复原＝resize 重建了图集）。忙时每 5 分钟、收工时距上次 >60s 主动重建，重画一帧无感。
+  // 图集按字体配置在标签间共享，单独清一个标签会让其他标签的字指向已清空的纹理（大面积丢字），
+  // 所以全局节流、到点后所有标签同一 tick 一起清：头一个清掉共享纹理，其余只重建自己的模型并重绘
+  atlasCare(now, eager) {
+    if (!this._atlasAt) { this._atlasAt = now; return; } // 刚启动图集是干净的，先记时间
+    if (now - this._atlasAt < (eager ? 60000 : 300000)) return;
+    this._atlasAt = now;
+    this.sessions.forEach((s) => { try { s.webgl?.clearTextureAtlas(); } catch { /* */ } });
   },
   // 兼容渲染模式：关 WebGL 改用 DOM renderer（无字形图集，从机制上杜绝中文乱码；大输出略慢）。
   // 对所有已开标签立即生效；选择存 localStorage，新标签在创建处同样遵守
@@ -2957,7 +2958,7 @@ const term = {
       const now = Date.now(); let anyBusy = false;
       this.sessions.forEach((s) => {
         if (s.status !== 'busy') return;
-        this.atlasCare(s, now); // 忙满 5 分钟清一次图集，长中文输出中途也能自愈
+        this.atlasCare(now); // 忙满 5 分钟清一次图集，长中文输出中途也能自愈
         const quiet = now - (s.lastData || 0);
         if (quiet <= 2500) { anyBusy = true; return; } // claude/codex 忙碌心跳约 1s 一帧，容差太紧会闪断误报
         const tail = this.tailText(s);
@@ -2965,7 +2966,7 @@ const term = {
         if (quiet < 30000 && /esc to interrupt/i.test(tail)) { anyBusy = true; return; }
         const dur = (s.lastReal || 0) - (s.busyStart || 0); // 工时只数自发输出：回显续命不算，免得打字把琐碎回显养肥成「真任务」
         s.status = 'idle';
-        this.atlasCare(s, now, true); // 收工间隙兜底再清一次（距上次 >60s 才动手）
+        this.atlasCare(now, true); // 收工间隙兜底再清一次（距上次 >60s 才动手）
         this.renderTabs();
         this.refreshCwd(s); // 干完一段活，标题对齐终端真实目录
         // 阶段性收工不报喜：底部状态行还挂着后台任务（「1 shell, 1 monitor still running」/「· 1 shell ·」），

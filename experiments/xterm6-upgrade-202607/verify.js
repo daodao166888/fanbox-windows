@@ -81,7 +81,7 @@ setTimeout(() => { console.error('FAIL: watchdog 超时'); process.exit(2); }, 1
     let n = 0;
     const orig = s.webgl.clearTextureAtlas.bind(s.webgl);
     s.webgl.clearTextureAtlas = () => { n++; orig(); };
-    s._atlasAt = Date.now() - 301000; // 假装 5 分钟没清过
+    term._atlasAt = Date.now() - 301000; // 假装 5 分钟没清过（2.6.1 起全局计时，标签一起清）
     const iv = setInterval(() => { s.xterm.write('.'); term.markBusy(s); }, 300); // 维持 busy
     await new Promise((r) => setTimeout(r, 1500)); // 状态机 600ms 一拍，等两拍
     clearInterval(iv);
@@ -97,7 +97,7 @@ setTimeout(() => { console.error('FAIL: watchdog 超时'); process.exit(2); }, 1
     let n = 0;
     const orig = s.webgl.clearTextureAtlas.bind(s.webgl);
     s.webgl.clearTextureAtlas = () => { n++; orig(); };
-    s._atlasAt = Date.now() - 61000; // 距上次清理 61 秒
+    term._atlasAt = Date.now() - 61000; // 距上次清理 61 秒（2.6.1 起全局计时）
     await new Promise((r) => setTimeout(r, 4000)); // 停止输出，等 2.5s 静默判定 + 状态机拍子
     const out = { n, status: s.status };
     s.webgl.clearTextureAtlas = orig;
