@@ -151,20 +151,19 @@ function startShotWatch() {
 }
 
 // ---------- 更新检测：查 GitHub Releases，有新版本通知渲染层引导下载 ----------
-// 现阶段只做「检测 + 引导」：Apple Development 签名过不了 Squirrel.Mac 的校验，
-// electron-updater 全自动更新要等升级 Developer ID 后再换
+// Windows 版检测自己的 fork release；macOS 原版走 alchaincyf/fanbox
 function cmpVer(a, b) {
   const pa = String(a).replace(/^v/, '').split('.').map(Number);
   const pb = String(b).replace(/^v/, '').split('.').map(Number);
   for (let i = 0; i < 3; i++) { const d = (pa[i] || 0) - (pb[i] || 0); if (d) return d; }
   return 0;
 }
-const REL_PAGE = 'https://github.com/alchaincyf/fanbox/releases/latest';
+const REL_PAGE = 'https://github.com/daodao166888/fanbox-windows/releases/latest';
 async function fetchLatestRelease() {
   // 先走 API（信息全）；代理共享出口 IP 很容易吃 GitHub API 的未认证限流（60 次/小时/IP，403），
   // 失败就退回抓 releases/latest 网页重定向——重定向后的 URL 自带 tag，且不占 API 配额
   try {
-    const res = await net.fetch('https://api.github.com/repos/alchaincyf/fanbox/releases/latest', {
+    const res = await net.fetch('https://api.github.com/repos/daodao166888/fanbox-windows/releases/latest', {
       headers: { 'User-Agent': 'fanbox-app', Accept: 'application/vnd.github+json' },
     });
     if (res.ok) {
@@ -206,7 +205,7 @@ async function checkUpdate(opts) {
       const c = dialog.showMessageBoxSync(owner, {
         type: 'info', buttons: [M('去下载', 'Download'), M('取消', 'Cancel')], defaultId: 0, cancelId: 1,
         message: M(`发现新版本 v${pendingUpdate.version}`, `New version v${pendingUpdate.version} available`),
-        detail: M(`当前版本 v${app.getVersion()}。点「去下载」打开发布页，下载后替换 /Applications 里的旧版即可。`, `You are on v${app.getVersion()}. "Download" opens the release page; replace the old app in /Applications.`),
+        detail: M(`当前版本 v${app.getVersion()}。点「去下载」打开发布页，下载安装包覆盖安装即可。`, `You are on v${app.getVersion()}. "Download" opens the release page; download and reinstall to update.`),
       });
       if (c === 0) shell.openExternal(pendingUpdate.url);
     } else {
