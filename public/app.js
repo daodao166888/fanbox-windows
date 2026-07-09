@@ -2142,9 +2142,18 @@ async function renderAgentButtons() {
     b.className = 'agent-launch';
     b.dataset.agent = a.id;
     b.id = 'term-' + String(a.id).replace(/[^\w-]/g, '');
-    b.title = a.app ? `打开 ${a.label} 桌面应用（该产品无终端 CLI 形态）` : `启动 ${a.label}：空闲终端就地启动，正跑着任务则新开标签`;
+    const hasApp = a.app && agentsPop.which && agentsPop.which[a.app] === true;
+    const hasBin = a.bin && agentsPop.which && agentsPop.which[a.bin] !== false;
+    b.title = a.app && !hasBin ? `打开 ${a.label} 桌面应用` : `启动 ${a.label}：空闲终端就地启动，正跑着任务则新开标签`;
     b.innerHTML = (await agentIconHtml(a.id)) || `<span class="agent-abbr">${escapeHtml(String(a.label || a.id).slice(0, 2))}</span>`;
-    b.onclick = () => { term.launchAgent(a.cmd); };
+    b.onclick = () => {
+      if (a.app && !hasBin && navigator.platform.toLowerCase().includes('win')) {
+        fetch('/api/open', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ path: a.app }) }).catch(() => {});
+        toast('正在启动 ' + a.label);
+      } else {
+        term.launchAgent(a.cmd);
+      }
+    };
     anchor.parentElement.insertBefore(b, anchor);
   }
 }
@@ -2201,7 +2210,7 @@ const agentsPop = {
     for (const a of AGENT_REGISTRY) {
       const f = pop.querySelector(`[data-flag="${a.id}"]`);
       if (!f || this.which[a.bin || a.app] !== false) continue;
-      f.textContent = '未装';
+      f.textContent = a.app && this.which[a.app] === true ? '桌面应用' : '未装';
       f.title = '点击复制安装命令：' + a.install;
       f.onclick = (ev) => { ev.preventDefault(); navigator.clipboard.writeText(a.install).then(() => toast('已复制安装命令')); };
     }

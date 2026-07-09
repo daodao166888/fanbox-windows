@@ -538,6 +538,24 @@ async function findAgentBin(name) {
     }
   });
 }
+// 查找 Windows 桌面应用的 .exe 路径（PATH + 常见安装目录）
+async function findAppExe(name) {
+  if (PLATFORM !== 'win32') return null;
+  // 先查 PATH
+  const binPath = await findAgentBin(name + '.exe') || await findAgentBin(name);
+  if (binPath) return binPath;
+  // 再查常见安装目录
+  const safe = name.replace(/"/g, '');
+  const paths = [
+    path.join(process.env.ProgramFiles || 'C:\\Program Files', safe, safe + '.exe'),
+    path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', safe, safe + '.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', safe, safe + '.exe'),
+    path.join(process.env.APPDATA || '', safe, safe + '.exe'),
+    path.join(process.env.LOCALAPPDATA || '', safe, safe + '.exe'),
+  ];
+  for (const p of paths) { try { if (fs.existsSync(p)) return p; } catch { /* */ } }
+  return null;
+}
 
 // 最近几次整理日志的一句话摘要，给 agent 当历史参照（日志由 agent 按 brief 约定写入）
 async function organizeHistory() {
@@ -2282,7 +2300,20 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/open' && req.method === 'POST') {
       const body = await readBody(req);
-      const result = await openInOS(resolvePath(body.path), body.with);
+      let result;
+      // Windows 桌面应用：body.path 是纯应用名（无路径分隔符），找到 exe 后启动
+      if (PLATFORM === 'win32' && body.path && !/[\\/.]/.test(body.path) && !body.with) {
+        const appPath = await findAppExe(body.path);
+        result = await new Promise((resolve) => {
+          if (appPath) {
+            execFile('cmd', ['/c', 'start', '', appPath], (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, with: 'app' }));
+          } else {
+            resolve({ ok: false, error: '未找到 ' + body.path + ' 的安装路径' });
+          }
+        });
+      } else {
+        result = await openInOS(resolvePath(body.path), body.with);
+      }
       // 记录最近打开（串行 RMW，不丢更新）
       if (result.ok) {
         await updateConfig((cfg) => { cfg.recentOpened = [body.path, ...(cfg.recentOpened || []).filter((x) => x !== body.path)].slice(0, 30); });
