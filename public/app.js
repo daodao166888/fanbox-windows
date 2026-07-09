@@ -234,6 +234,11 @@ function toast(msg, isErr) {
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// marked.parse 输出经 DOMPurify 二次过滤，防止恶意 .md 文件 XSS
+function safeMarkdown(content) {
+  const raw = window.marked.parse(content);
+  return window.DOMPurify ? window.DOMPurify.sanitize(raw) : raw;
+}
 
 // ---------- 未保存守卫 ----------
 // 文本/图片编辑期间，离开当前编辑器（点别的文件、跳目录、关预览）都要先确认，
@@ -606,7 +611,7 @@ function renderTextPreview(data) {
   const meta = `<div class="preview-meta"><span>${data.ext || 'txt'}</span><span>${fmtSize(data.size)}</span><span>${fmtTime(data.mtime)}</span></div>`;
   const ex = (data.ext || '').toLowerCase();
   if ((ex === 'md' || ex === 'markdown') && !window.__noMarked && window.marked) {
-    body.innerHTML = meta + `<div class="md-body">${window.marked.parse(data.content || '')}</div>`;
+    body.innerHTML = meta + `<div class="md-body">${safeMarkdown(data.content || '')}</div>`;
     if (window.hljs) body.querySelectorAll('pre code').forEach((b) => { try { window.hljs.highlightElement(b); } catch {} });
   } else if (ex === 'csv' || ex === 'tsv') {
     body.innerHTML = meta + csvTable(data.content || '', ex === 'tsv' ? '\t' : ',');
@@ -3863,7 +3868,7 @@ async function liveMd(e, first) {
   const range = follow.lastContent == null ? null : changedRange(follow.lastContent, content);
   const nearEnd = !range || range.end >= content.split('\n').length - 4;
   const keep = body.scrollTop;
-  body.innerHTML = `<div class="md-body">${window.marked.parse(content)}</div>`;
+  body.innerHTML = `<div class="md-body">${safeMarkdown(content)}</div>`;
   if (window.hljs && !window.__noHljs) body.querySelectorAll('pre code').forEach((b) => { try { window.hljs.highlightElement(b); } catch { /* */ } });
   follow.lastContent = content;
   if (nearEnd) body.scrollTo({ top: body.scrollHeight, behavior: first ? 'auto' : 'smooth' });

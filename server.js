@@ -446,27 +446,32 @@ function trashPath(p) {
     try { target = resolvePath(p); } catch { return resolve({ ok: false, error: '非法路径' }); }
     let isDir = false;
     try { isDir = fs.lstatSync(target).isDirectory(); } catch { return resolve({ ok: false, error: '文件不存在' }); }
-    let cmd;
-    if (PLATFORM === 'darwin') {
-      // 路径走 argv，不拼进单引号 AppleScript 字面量——避免含 ' 的文件名删除失败/注入
-      // POSIX file 必须 as alias 强转，否则 Finder 解析不了报 -1728
-      cmd = `osascript -e 'on run argv' -e 'tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)' -e 'end run' ${shellQuote(target)}`;
-    } else if (PLATFORM === 'win32') {
-      const method = isDir ? 'DeleteDirectory' : 'DeleteFile';
-      const ps = target.replace(/'/g, "''");
-      cmd = `powershell -NoProfile -Command "Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${ps}','OnlyErrorDialogs','SendToRecycleBin')"`;
-    } else {
-      cmd = `gio trash ${shellQuote(target)} || trash-put ${shellQuote(target)} || trash ${shellQuote(target)}`;
-    }
-    exec(cmd, (err) => {
+    const onTrashErr = (err) => {
       if (!err) return resolve({ ok: true });
       let msg = err.message;
-      // Finder 自动化未授权（-1743/-600）给人话
       if (PLATFORM === 'darwin' && /-1743|-600|not allowed|authoriz/i.test(msg)) {
         msg = '需在「系统设置 → 隐私与安全性 → 自动化」里允许 FanBox 控制 Finder（首次删除会弹授权）';
       }
       resolve({ ok: false, error: msg });
-    });
+    };
+    if (PLATFORM === 'darwin') {
+      // 路径走 argv，不拼进 AppleScript 字面量——避免含 ' 的文件名注入
+      execFile('osascript', ['-e', 'on run argv', '-e', 'tell application "Finder" to delete (POSIX file (item 1 of argv) as alias)', '-e', 'end run', target], onTrashErr);
+    } else if (PLATFORM === 'win32') {
+      const method = isDir ? 'DeleteDirectory' : 'DeleteFile';
+      const ps = target.replace(/'/g, "''");
+      execFile('powershell', ['-NoProfile', '-Command', `Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${ps}','OnlyErrorDialogs','SendToRecycleBin')`], onTrashErr);
+    } else {
+      // Linux: 依次尝试 trash 工具
+      const trashBins = [['gio', ['trash', target]], ['trash-put', [target]], ['trash', [target]]];
+      let ti = 0;
+      const tryNext = () => {
+        if (ti >= trashBins.length) return onTrashErr(new Error('no trash tool found'));
+        const [bin, args] = trashBins[ti];
+        execFile(bin, args, (err) => { if (err) { ti++; tryNext(); } else onTrashErr(null); });
+      };
+      tryNext();
+    }
   });
 }
 
@@ -1277,21 +1282,22 @@ async function saveImage({ path: target, dataUrl, newName }) {
 
 function openInOS(target, withApp) {
   return new Promise((resolve) => {
-    let cmd, args;
     if (withApp === 'terminal') {
       // 在该目录（文件则取其所在目录）打开系统终端，找回项目后一键去跑
       const dir = (() => { try { return fs.statSync(target).isDirectory() ? target : path.dirname(target); } catch { return path.dirname(target); } })();
-      if (PLATFORM === 'darwin') cmd = `open -a Terminal ${shellQuote(dir)}`;
-      else if (PLATFORM === 'win32') cmd = `start "" cmd /K cd /d "${dir}"`;
-      else cmd = `x-terminal-emulator --working-directory=${shellQuote(dir)} || gnome-terminal --working-directory=${shellQuote(dir)} || xterm`;
-      exec(cmd, (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, with: 'terminal' }));
+      if (PLATFORM === 'darwin') {
+        execFile('open', ['-a', 'Terminal', dir], (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, with: 'terminal' }));
+      } else if (PLATFORM === 'win32') {
+        execFile('cmd', ['/c', 'start', '', 'cmd', '/K', 'cd', '/d', dir], (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, with: 'terminal' }));
+      } else {
+        // Linux: 依次尝试常见终端模拟器
+        openTerminalLinux(dir).then(resolve);
+      }
       return;
     }
     if (withApp === 'editor') {
       // 用 VS Code 打开（文件或文件夹）
-      cmd = 'code';
-      args = [target];
-      const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+      const child = spawn('code', [target], { stdio: 'ignore', detached: true });
       child.on('error', () => {
         // 没装 code CLI，回退到系统默认
         openDefault(target, withApp).then(resolve);
@@ -1302,24 +1308,38 @@ function openInOS(target, withApp) {
     openDefault(target, withApp).then(resolve);
   });
 }
+function openTerminalLinux(dir) {
+  const terminals = [
+    { bin: 'x-terminal-emulator', args: [`--working-directory=${dir}`] },
+    { bin: 'gnome-terminal', args: [`--working-directory=${dir}`] },
+    { bin: 'xterm', args: [] },
+  ];
+  return new Promise((resolve) => {
+    const tryNext = (i) => {
+      if (i >= terminals.length) return resolve({ ok: false, error: 'no terminal found' });
+      const t = terminals[i];
+      execFile(t.bin, t.args, (err) => {
+        if (err) return tryNext(i + 1);
+        resolve({ ok: true, with: 'terminal' });
+      });
+    };
+    tryNext(0);
+  });
+}
 
 function openDefault(target, withApp) {
   return new Promise((resolve) => {
-    let cmd;
+    const onErr = (err) => resolve(err ? { ok: false, error: err.message } : { ok: true, with: withApp || 'default' });
     if (PLATFORM === 'darwin') {
-      if (withApp === 'reveal') cmd = `open -R ${shellQuote(target)}`;
-      else cmd = `open ${shellQuote(target)}`;
+      if (withApp === 'reveal') execFile('open', ['-R', target], onErr);
+      else execFile('open', [target], onErr);
     } else if (PLATFORM === 'win32') {
-      if (withApp === 'reveal') cmd = `explorer /select,"${target}"`;
-      else cmd = `start "" "${target}"`;
+      if (withApp === 'reveal') execFile('explorer', ['/select,', target], onErr);
+      else execFile('cmd', ['/c', 'start', '', target], onErr);
     } else {
-      if (withApp === 'reveal') cmd = `xdg-open ${shellQuote(path.dirname(target))}`;
-      else cmd = `xdg-open ${shellQuote(target)}`;
+      if (withApp === 'reveal') execFile('xdg-open', [path.dirname(target)], onErr);
+      else execFile('xdg-open', [target], onErr);
     }
-    exec(cmd, (err) => {
-      if (err) resolve({ ok: false, error: err.message });
-      else resolve({ ok: true, with: withApp || 'default' });
-    });
   });
 }
 
@@ -2468,7 +2488,8 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log('\n  按 Ctrl+C 退出\n');
   pruneThumbs().catch(() => {}); // 启动时裁剪缩略图缓存，防止无限增长
   if (!process.env.FANBOX_NO_OPEN) {
-    const opener = PLATFORM === 'darwin' ? 'open' : PLATFORM === 'win32' ? 'start' : 'xdg-open';
-    exec(`${opener} ${link}`, () => {});
+    if (PLATFORM === 'darwin') execFile('open', [link], () => {});
+    else if (PLATFORM === 'win32') execFile('cmd', ['/c', 'start', '', link], () => {});
+    else execFile('xdg-open', [link], () => {});
   }
 });

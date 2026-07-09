@@ -85,10 +85,10 @@
     "sharp": "^0.35.1"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.0",
+    "@electron/rebuild": "^4.2.0",
     "@milkdown/crepe": "^7.21.2",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "^43.1.0",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.0",
     "highlight.js": "^11.11.1",
     "marked": "^12.0.2",
