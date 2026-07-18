@@ -290,6 +290,8 @@ kbd {
 .grid .item .icon .play-badge { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 34px; height: 34px; border-radius: 50%; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; backdrop-filter: blur(2px); pointer-events: none; }
 .grid .item .icon .svg-icon { display: flex; filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.12)); }
 .grid .item .fname { font-size: 12px; word-break: break-all; line-height: 1.3; max-height: 32px; overflow: hidden; color: var(--text); }
+/* 小图标格子窄，两行装不下几个字：放宽到三行；中/大图标行宽足够仍两行 */
+.grid.size-sm .item .fname { max-height: 47px; }
 
 /* 文件夹 vs 文件：扁平实心文件夹（无盒子）+ 名称加粗；文件名常规、略淡 */
 .grid .item.is-dir .fname { font-weight: 650; }
@@ -337,6 +339,7 @@ kbd {
 #preview {
   background: var(--panel); flex: 0 0 auto;
   display: flex; flex-direction: column; overflow: hidden; min-height: 0; min-width: 0;
+  container-type: inline-size;
 }
 #preview.hidden { display: none; }
 /* 全屏放大：脱离分屏，铺满整个窗口（盖住文件区/终端/侧边栏）。md/html 放大后照样可看可编辑。
@@ -354,6 +357,12 @@ kbd {
 #preview-close { background: none; border: none; color: var(--text-dim); font-size: 16px; cursor: pointer; flex: 0 0 auto; margin-left: 2px; }
 #preview-close:hover { color: var(--text); }
 .preview-actions { display: flex; flex-wrap: nowrap; gap: 5px; padding: 0; margin-left: auto; overflow: visible; scrollbar-width: none; }
+.preview-actions button { flex: none; }
+/* 预览被压窄时操作条自身横向滚动（触控板横扫），标题和关闭钮永远在位。
+   代价：滚动容器会裁掉按钮的 hover 气泡，所以只在窄时开启，宽时保持 overflow:visible */
+@container (max-width: 420px) {
+  .preview-actions { overflow-x: auto; min-width: 0; }
+}
 
 /* 无文字图标按钮的即时气泡标签（替代慢吞吞、样式丑的原生 title）。统一向下弹出，避免贴顶被裁 */
 [data-tip] { position: relative; }
@@ -542,7 +551,8 @@ kbd {
 /* 底部状态条：贴在文件区底缘，内容短时也贴底（margin-top:auto），滚动时 sticky 常驻 */
 #statusbar {
   position: sticky; bottom: 0; margin-top: auto; flex: none;
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  display: flex; align-items: center; gap: 10px; white-space: nowrap;
+  overflow-x: auto; scrollbar-width: none;
   padding: 5px 16px; font-size: 11.5px; color: var(--text-faint);
   background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(6px);
 }
@@ -585,7 +595,7 @@ kbd {
 .shot-acts button:hover { color: var(--text); border-color: var(--accent); }
 
 /* 项目记忆 */
-.sb-links { display: flex; gap: 14px; }
+.sb-links { display: flex; gap: 14px; margin-left: auto; }
 .mem-dialog { width: 680px; max-width: 94vw; }
 .mem-body { max-height: 68vh; overflow-y: auto; margin-top: 8px; }
 .mem-sess { padding: 9px 6px; border-bottom: 1px solid var(--border); }

@@ -357,16 +357,11 @@ function visibleEntries() {
 function renderStatusbar() {
   const sb = $('#statusbar'); if (!sb) return;
   if (state.skillsMode || state.recentMode || !state.cwd) { sb.classList.add('hidden'); return; }
-  const list = state.visible || [];
-  const dirs = list.filter((e) => e.isDir).length;
-  const files = list.length - dirs;
-  const bytes = list.reduce((a, e) => a + (e.isDir ? 0 : e.size || 0), 0);
   sb.classList.remove('hidden');
-  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-snap" title="agent 每轮开工前的自动存档，可一键回到任意一轮之前">回合存档</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
+  sb.innerHTML = `<span class="sb-links"><a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-snap" title="agent 每轮开工前的自动存档，可一键回到任意一轮之前">回合存档</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
   $('#sb-du').onclick = () => diskPanel(state.cwd);
   $('#sb-mem').onclick = () => memoryPanel(state.cwd);
   $('#sb-snap').onclick = () => snapshotPanel(state.cwd);
-  const rel = $('#sb-rel'); if (rel) rel.onclick = () => releasePanel();
 }
 function renderFiles() {
   if (state.skillsMode) return; // skills 视图自管 #file-area，文件渲染不要清掉它
@@ -2614,8 +2609,6 @@ const term = {
     await navigate(dirOf(r.path));
     const e = state.entries.find((x) => x.path === r.path) || { path: r.path, name: baseOf(r.path), kind: 'text', isDir: false };
     applySelection(r.path); openPreview(e); recordRecent(r.path);
-    // md/html 是「写给人看」的：点开即全屏，最贴合「我想看看这文件长啥样」的意图（代码等退回常规分栏）
-    setPreviewMax(isMdName(r.path) || isHtmlName(r.path));
     toast(r.viaSearch ? '未精确命中，已打开最接近的「' + baseOf(r.path) + '」' : (r.viaScrollback ? '已按会话里出现过的路径打开' : '已打开'));
   },
   // 从 fromRow 往上回扫 scrollback（最多 2000 物理行），收集含该 basename 的绝对路径（/ 或 ~ 开头，
