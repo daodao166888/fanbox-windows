@@ -2175,6 +2175,11 @@ const agentsPop = {
         <input type="checkbox" ${(() => { try { return localStorage.getItem('fanbox.noWebgl') === '1' ? '' : 'checked'; } catch { return 'checked'; } })()}>
         <span class="ap-name">WebGL 加速渲染</span>
       </label>
+      <div class="ap-head ap-sub">Agent 互控</div>
+      <div class="ap-row" title="装进 ~/.claude/skills 后，翻箱终端里的 claude 就能指挥兄弟窗口：新开窗口 / 读输出 / 发指令 / 等结果">
+        <span class="ap-name">fanbox-agent skill</span>
+        <span class="ap-flag" data-skill-flag="fanbox-agent"></span>
+      </div>
       <div class="ap-foot">勾选即生效 · 点「未装」复制安装命令<br>高级：~/.fanbox/config.json 的 agents 数组可自定义命令 / 加新 agent</div>`;
     document.body.appendChild(pop);
     const r = $('#agent-config').getBoundingClientRect();
@@ -2183,6 +2188,7 @@ const agentsPop = {
     this.el = pop;
     AGENT_REGISTRY.forEach(async (a) => { const el = pop.querySelector(`[data-ic="${a.id}"]`); const ic = await agentIconHtml(a.id); if (el) el.innerHTML = ic || `<span class="agent-abbr">${escapeHtml(a.label.slice(0, 2))}</span>`; });
     this.markInstalled(pop);
+    this.markSkill(pop);
     const wgCb = pop.querySelector('[data-webgl] input');
     if (wgCb) wgCb.onchange = () => { term.setWebgl(wgCb.checked); toast(wgCb.checked ? 'WebGL 渲染已开启' : '已切换兼容渲染（修中文乱码）'); };
     pop.querySelectorAll('.ap-list .ap-row input').forEach((cb) => {
@@ -2195,6 +2201,22 @@ const agentsPop = {
     });
     this._out = (ev) => { if (!pop.contains(ev.target) && !$('#agent-config').contains(ev.target)) this.close(); };
     document.addEventListener('mousedown', this._out, true);
+  },
+  // 内置 skill 安装状态：未装 →「安装」可点；装过但内容旧 →「可更新」可点；最新 →「已装 ✓」
+  async markSkill(pop) {
+    const f = pop.querySelector('[data-skill-flag="fanbox-agent"]');
+    if (!f) return;
+    let st = null;
+    try { st = ((await api('/api/skills/builtin')).skills || []).find((s) => s.id === 'fanbox-agent'); } catch { /* */ }
+    if (!st) { f.textContent = '不可用'; return; }
+    const set = (txt, click) => { f.textContent = txt; f.onclick = click || null; f.style.cursor = click ? 'pointer' : ''; };
+    if (st.installed && st.upToDate) return set('已装 ✓');
+    set(st.installed ? '可更新' : '安装', async (ev) => {
+      ev.preventDefault();
+      const r = await apiPost('/api/skills/install-builtin', { id: 'fanbox-agent' }).catch(() => null);
+      if (r && r.ok) { set('已装 ✓'); toast('fanbox-agent skill 已装进 ~/.claude/skills，终端里的 claude 即刻可用'); }
+      else toast('安装失败' + (r && r.error ? '：' + r.error : ''), true);
+    });
   },
   async markInstalled(pop) {
     if (!this.which) {
@@ -3080,7 +3102,8 @@ const term = {
       const hue = this.hueOf(s.cwd || s.startDir);
       t.title = followed ? '文件跟随正盯着这个终端 · 双击跳到它所在目录' : '双击：文件区跳到该终端所在目录';
       const eye = followed ? `<span class="tab-eye" title="文件跟随盯着它">${ic('eye', 'currentColor', 11)}</span>` : '';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
+      const zap = s.agentTouch && Date.now() - s.agentTouch < 8000 ? '<span class="tab-zap" title="正被 agent 控制">⚡</span>' : ''; // 被 agent 遥控过闪 8 秒：审计 + 围观
+      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${eye}${zap}${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
       t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
       t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
       bar.appendChild(t);
@@ -4134,5 +4157,23 @@ function bindUpdateNotice() {
 // 终端渲染器诊断开关：fbWebgl(false) 关 WebGL 用 DOM renderer 排查 CJK 残影，fbWebgl(true) 恢复。
 // 与设置面板「WebGL 加速渲染」同一逻辑，对所有已开标签立即生效
 window.fbWebgl = (on) => { term.setWebgl(!!on); console.log('[fanbox] WebGL ' + (on ? '已开启' : '已关闭（DOM renderer 兼容渲染）') + '，已对所有终端标签生效'); return !!on; };
+
+// Agent 控制接口（/api/agent/*）的渲染侧配合：应 main 之邀开新终端 tab + 给被控 tab 闪 ⚡
+if (window.fanboxAgentCtl) {
+  window.fanboxAgentCtl.onCreate(async ({ reqId, cwd }) => {
+    try {
+      if ($('#terminal-panel').classList.contains('hidden')) term.open();
+      const sess = await term.newTab(cwd || undefined);
+      window.fanboxAgentCtl.created({ reqId, ok: !!(sess && sess.id), id: sess && sess.id });
+    } catch (e) { window.fanboxAgentCtl.created({ reqId, ok: false, error: String(e && e.message || e) }); }
+  });
+  window.fanboxAgentCtl.onTouch(({ id }) => {
+    const s = term.sessions.find((x) => x.id === id);
+    if (!s) return;
+    s.agentTouch = Date.now();
+    term.renderTabs();
+    setTimeout(() => term.renderTabs(), 8200); // 标记过期后重画抹掉
+  });
+}
 
 init();

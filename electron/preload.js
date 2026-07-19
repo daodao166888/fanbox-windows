@@ -54,6 +54,13 @@ contextBridge.exposeInMainWorld('fanboxWin', {
   trafficLights: (show) => ipcRenderer.invoke('win:traffic', { show }), // 全屏预览时藏/显左上角系统按钮
 });
 
+// Agent 控制接口（/api/agent/*）的渲染侧配合：main 请求开新终端 tab + 被控 tab 闪标记
+contextBridge.exposeInMainWorld('fanboxAgentCtl', {
+  onCreate: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:term-create', h); return () => ipcRenderer.removeListener('agent:term-create', h); },
+  created: (m) => ipcRenderer.send('agent:term-created', m),
+  onTouch: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('agent:touch', h); return () => ipcRenderer.removeListener('agent:touch', h); },
+});
+
 contextBridge.exposeInMainWorld('fanboxEnv', {
   isDesktopApp: true,
   platform: process.platform,

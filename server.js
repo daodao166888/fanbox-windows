@@ -2187,6 +2187,42 @@ async function skillTrash(dir) {
   return r;
 }
 
+// ---------- 内置 skill 一键安装（设置面板）----------
+// 随 app 分发的 skill（skills/<id>/）拷进 ~/.claude/skills/<id>/，终端里的 claude 就学会翻箱的配套玩法。
+// asar 包里 fs 照常可读（Electron 补丁过的 fs），开发目录直接跑也一样。
+const BUILTIN_SKILLS = ['fanbox-agent'];
+function builtinSkillPaths(id) {
+  if (!BUILTIN_SKILLS.includes(id)) return null;
+  return { src: path.join(__dirname, 'skills', id), dst: path.join(HOME, '.claude', 'skills', id) };
+}
+async function builtinSkillStatus() {
+  const items = [];
+  for (const id of BUILTIN_SKILLS) {
+    const { src, dst } = builtinSkillPaths(id);
+    try {
+      const bundled = await fsp.readFile(path.join(src, 'SKILL.md'), 'utf8');
+      let installed = false, upToDate = false;
+      try { installed = true; upToDate = (await fsp.readFile(path.join(dst, 'SKILL.md'), 'utf8')) === bundled; }
+      catch { installed = false; }
+      items.push({ id, installed, upToDate });
+    } catch { /* 包里没带这个 skill（精简构建）：不展示 */ }
+  }
+  return { ok: true, skills: items };
+}
+async function builtinSkillInstall(id) {
+  const p = builtinSkillPaths(id);
+  if (!p) return { ok: false, error: 'unknown skill' };
+  try {
+    await fsp.mkdir(p.dst, { recursive: true });
+    for (const name of await fsp.readdir(p.src)) { // 单层拷贝够用：skill 目录当前只有 SKILL.md
+      const st = await fsp.stat(path.join(p.src, name));
+      if (st.isFile()) await fsp.writeFile(path.join(p.dst, name), await fsp.readFile(path.join(p.src, name)));
+    }
+    skillsCache = { at: 0, data: null }; // skills 面板下次打开能立刻看到
+    return { ok: true };
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 async function agentUsage() {
   if (usageResultCache.data && Date.now() - usageResultCache.at < 30000) return usageResultCache.data;
   const [claude, codex, claudeLimits] = await Promise.all([
@@ -2437,6 +2473,17 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/skills') {
       return sendJSON(res, 200, await skillsData());
     }
+    if (p === '/api/skills/builtin') {
+      return sendJSON(res, 200, await builtinSkillStatus());
+    }
+    if (p === '/api/skills/install-builtin' && req.method === 'POST') {
+      const b = await readBody(req);
+      return sendJSON(res, 200, await builtinSkillInstall(b.id));
+    }
+    if (p === '/api/skills/refresh' && req.method === 'POST') {
+      const b = await readBody(req);
+      const extraCwds = b && b.cwd ? [b.cwd] : [];
+    }
     if (p === '/api/skills/toggle' && req.method === 'POST') {
       const b = await readBody(req);
       return sendJSON(res, 200, await skillToggle(b.dir, !!b.enable));
@@ -2461,6 +2508,22 @@ const server = http.createServer(async (req, res) => {
       }
       const cfg = await readConfig();
       return sendJSON(res, 200, { favorites: cfg.favorites || [], recentOpened: cfg.recentOpened || [] });
+    }
+
+    // ---------- Agent 控制接口：桌面 app 专属（能力由 electron/main.js 注入 global.__fanboxAgent）----------
+    // token 只注入翻箱自开终端的环境变量、不落盘：只有跑在翻箱终端里的 agent 拿得到门票。见 docs/12。
+    if (p.startsWith('/api/agent/')) {
+      const A = global.__fanboxAgent;
+      if (!A) return sendJSON(res, 501, { ok: false, error: 'desktop app only' });
+      const tok = req.headers['x-fanbox-token'] || qp.get('token') || '';
+      if (tok !== A.token) return sendJSON(res, 403, { ok: false, error: 'bad token' });
+      if (p === '/api/agent/terminals') return sendJSON(res, 200, await A.list());
+      if (p === '/api/agent/read') return sendJSON(res, 200, A.read(qp.get('id'), parseInt(qp.get('lines') || '0', 10)));
+      if (p === '/api/agent/send' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, A.send(b.id, b.text, b)); }
+      if (p === '/api/agent/create' && req.method === 'POST') { return sendJSON(res, 200, await A.create(await readBody(req))); }
+      if (p === '/api/agent/wait' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, await A.wait(b.id, b)); }
+      if (p === '/api/agent/kill' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, A.kill(b.id)); }
+      return sendJSON(res, 404, { ok: false, error: 'unknown agent endpoint' });
     }
 
     // 静态资源

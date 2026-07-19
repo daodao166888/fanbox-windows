@@ -23,6 +23,16 @@ catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）�
 const terminals = new Map();
 let win = null;
 
+// ---------- Agent 控制接口状态（/api/agent/*，见 docs/12）----------
+// token 每次启动随机生成、不落盘：只注入翻箱自己开的 pty 环境变量（FANBOX_CTL_TOKEN），
+// 能力边界 = FanBox 进程树——只有跑在翻箱终端里的 agent 拿得到门票，本机其他进程无从读取。
+// FANBOX_AGENT_TOKEN 环境变量可覆盖，供本地开发/自动化测试注入已知 token。
+const crypto = require('crypto');
+const AGENT_TOKEN = process.env.FANBOX_AGENT_TOKEN || crypto.randomBytes(24).toString('hex');
+const termBufs = new Map();    // id -> 去 ANSI 滚动缓冲（~200KB），/api/agent/read 的数据源
+const termLastOut = new Map(); // id -> 最近输出时间戳，wait 的 idle 判定
+const termWaiters = new Map(); // id -> Set<fn(text)>，wait 的增量输出订阅
+
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 function loadBounds() {
@@ -309,7 +319,11 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows }) => {
   // 走 login shell 把这些路径带进来。Windows 的 powershell 无此机制，保持空参数。
   const shellArgs = process.platform === 'win32' ? [] : ['-l'];
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
-  const env = { ...process.env, TERM: 'xterm-256color', FANBOX: '1' };
+  const env = {
+    ...process.env, TERM: 'xterm-256color', FANBOX: '1',
+    // 终端里的 agent 天生知道自己是几号窗口、控制接口在哪、门票是啥——skill 零配置（见 docs/12）
+    FANBOX_TERM_ID: id, FANBOX_CTL: `http://127.0.0.1:${PORT}/api/agent`, FANBOX_CTL_TOKEN: AGENT_TOKEN,
+  };
   if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
   let p;
   try {
@@ -325,6 +339,25 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows }) => {
   p.onData((data) => { if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data }); });
   p.onExit(({ exitCode }) => {
     terminals.delete(id);
+  refreshLidGuard(); // 开关开着时，第一个终端起来即生效
+  recStart(id, { cols, rows, cwd: startCwd, theme });
+  p.onData((data) => {
+    if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data });
+    recEvent(id, 'o', data);
+    const stripped = data.replace(/\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][AB0]|\r/g, '');
+    termTails.set(id, ((termTails.get(id) || '') + stripped).slice(-4000)); // 留最后 ~4KB，给微信 agent 看「最近输出」
+    termBufs.set(id, ((termBufs.get(id) || '') + stripped).slice(-200000)); // 大缓冲给 /api/agent/read
+    termLastOut.set(id, Date.now());
+    const ws = termWaiters.get(id);
+    if (ws) for (const fn of ws) { try { fn(stripped); } catch { /* 单个 waiter 异常不连累别人 */ } }
+  });
+  p.onExit(({ exitCode }) => {
+    terminals.delete(id);
+    termTails.delete(id);
+    termBufs.delete(id);
+    termLastOut.delete(id);
+    refreshLidGuard(); // 最后一个终端退出即恢复休眠
+    recStop(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
   });
   return { ok: true, cwd: startCwd };
@@ -390,6 +423,252 @@ ipcMain.handle('drop:copy-into', (e, { srcPath, dir }) => {
 ipcMain.on('pty:input', (e, { id, data }) => { const p = terminals.get(id); if (p) p.write(data); });
 ipcMain.on('pty:resize', (e, { id, cols, rows }) => { const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } } });
 ipcMain.on('pty:kill', (e, { id }) => { const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); } });
+ipcMain.on('pty:input', (e, { id, data }) => { const p = terminals.get(id); if (p) { p.write(data); recEvent(id, 'i', data); } });
+ipcMain.on('pty:resize', (e, { id, cols, rows }) => { const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } recEvent(id, 'r', `${cols}x${rows}`); } });
+ipcMain.on('pty:kill', (e, { id }) => { const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); refreshLidGuard(); recStop(id); } });
+
+// ---------- Agent 控制接口：把跨终端感知/控制能力开成本机 HTTP（server.js 的 /api/agent/* 调这里）----------
+// 让跑在翻箱终端里的 agent 指挥兄弟窗口：列表/读屏/输入/开窗/等待/关闭。安全模型与接口规范见 docs/12。
+const BARE_SHELL_RE = /^-?(zsh|bash|sh|fish|login)$/i;
+let agentReqSeq = 0;
+const agentCreateWaiters = new Map(); // reqId -> resolve（渲染进程建 tab 的回执）
+
+function agentTouch(id, action) { // 被 agent 控制的 tab 在界面上闪 ⚡：审计 + 围观
+  if (win && !win.isDestroyed()) win.webContents.send('agent:touch', { id, action });
+}
+async function agentList() {
+  const arr = [];
+  for (const [id, p] of terminals) {
+    const proc = (p && p.process) || '';
+    const cwd = await termCwdByPid(p && p.pid);
+    arr.push({
+      id, cwd, name: cwd ? path.basename(cwd) : '', proc,
+      busy: !!proc && !BARE_SHELL_RE.test(proc),
+      tail: (termTails.get(id) || '').slice(-500),
+    });
+  }
+  return { ok: true, terminals: arr };
+}
+function agentRead(id, lines) {
+  if (!terminals.has(id)) return { ok: false, error: 'no such terminal' };
+  const n = Math.max(1, Math.min(2000, lines || 200));
+  return { ok: true, id, text: (termBufs.get(id) || '').split('\n').slice(-n).join('\n') };
+}
+function agentSend(id, text, opts = {}) {
+  const p = terminals.get(id);
+  if (!p) return { ok: false, error: 'no such terminal' };
+  let t = String(text == null ? '' : text);
+  if (opts.paste) t = '\x1b[200~' + t + '\x1b[201~'; // bracketed paste：多行文本整块进 TUI，不被逐行提交
+  else t = t.replace(/\r\n|\n/g, '\r'); // 换行 → 回车才会真正提交
+  if (opts.submit !== false && !/\r$/.test(t)) t += '\r';
+  try { p.write(t); recEvent(id, 'i', t); agentTouch(id, 'send'); return { ok: true }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+function agentCreate(opts = {}) {
+  return new Promise((resolve) => {
+    if (!win || win.isDestroyed()) return resolve({ ok: false, error: 'no window' });
+    const reqId = 'ac' + (++agentReqSeq);
+    agentCreateWaiters.set(reqId, resolve);
+    win.webContents.send('agent:term-create', { reqId, cwd: typeof opts.cwd === 'string' ? opts.cwd : '' });
+    setTimeout(() => { if (agentCreateWaiters.delete(reqId)) resolve({ ok: false, error: 'renderer timeout' }); }, 10000);
+  }).then(async (r) => {
+    if (!r.ok) return r;
+    agentTouch(r.id, 'create');
+    if (!opts.autorun) return r;
+    // 等 shell 就绪（有过输出且静默 ≥400ms）再敲命令，login shell 初始化慢也不怕
+    const t0 = Date.now();
+    await new Promise((done) => {
+      const iv = setInterval(() => {
+        const last = termLastOut.get(r.id);
+        if ((last && Date.now() - last >= 400) || Date.now() - t0 > 8000) { clearInterval(iv); done(); }
+      }, 100);
+    });
+    const s = agentSend(r.id, String(opts.autorun));
+    return { ...r, autorun: s.ok };
+  });
+}
+ipcMain.on('agent:term-created', (e, { reqId, ok, id, error } = {}) => {
+  const resolve = agentCreateWaiters.get(reqId);
+  if (!resolve) return;
+  agentCreateWaiters.delete(reqId);
+  resolve(ok && id ? { ok: true, id } : { ok: false, error: error || 'create failed' });
+});
+function agentWait(id, opts = {}) {
+  return new Promise((resolve) => {
+    if (!terminals.has(id)) return resolve({ ok: false, error: 'no such terminal' });
+    let re = null;
+    if (opts.until) {
+      try { re = new RegExp(String(opts.until), 'm'); }
+      catch { return resolve({ ok: false, error: 'bad regex' }); }
+    }
+    const idleMs = Math.max(500, Math.min(30000, Number(opts.idleMs) || 2000));
+    const timeoutMs = Math.max(1000, Math.min(240000, Number(opts.timeoutMs) || 60000)); // 240s < node requestTimeout(300s)
+    const quietMode = opts.idle === 'quiet'; // quiet：只看输出静默（TUI 回答完）；默认还要求前台回到裸 shell
+    const started = Date.now();
+    let acc = ''; // 只累计 wait 开始后的新输出，正则也只匹配这段
+    let set = termWaiters.get(id);
+    if (!set) termWaiters.set(id, set = new Set());
+    const finish = (extra) => {
+      clearInterval(iv); set.delete(onData);
+      resolve({ elapsed: Date.now() - started, output: acc.slice(-8000), ...extra });
+    };
+    const onData = (s) => { acc = (acc + s).slice(-64000); if (re && re.test(acc)) finish({ ok: true, matched: true }); };
+    set.add(onData);
+    const iv = setInterval(() => {
+      const p = terminals.get(id);
+      if (!p) return finish({ ok: true, exited: true });
+      if (Date.now() - started >= timeoutMs) return finish({ ok: false, timeout: true });
+      if (re) return; // until 模式只认正则
+      if (Date.now() - (termLastOut.get(id) || started) < idleMs) return;
+      const proc = p.process || '';
+      if (quietMode || !proc || BARE_SHELL_RE.test(proc)) finish({ ok: true, idle: true });
+    }, 200);
+  });
+}
+function agentKill(id) {
+  const p = terminals.get(id);
+  if (!p) return { ok: false, error: 'no such terminal' };
+  try { p.kill(); agentTouch(id, 'kill'); return { ok: true }; }
+  catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+global.__fanboxAgent = { token: AGENT_TOKEN, list: agentList, read: agentRead, send: agentSend, create: agentCreate, wait: agentWait, kill: agentKill };
+
+// ---------- 录制文件管理 IPC ----------
+// 列表：读每个 .cast 的头行拿元信息 + 文件大小/时长（末事件时间），按新→旧。失败的文件跳过不报错。
+ipcMain.handle('rec:list', () => {
+  try {
+    const dir = REC_DIR();
+    if (!fs.existsSync(dir)) return { ok: true, items: [] };
+    const live = new Set([...recorders.values()].map((r) => r.path));
+    const items = [];
+    for (const name of fs.readdirSync(dir)) {
+      if (!name.endsWith('.cast')) continue;
+      const full = path.join(dir, name);
+      try {
+        const st = fs.statSync(full);
+        if (!st.isFile()) continue;
+        // 「打开但没干活」的空终端会留下几百字节的壳（提示符+括号粘贴开关），是噪音：
+        // 非正在录且体量过小的直接不进列表，省得满屏空录像
+        if (st.size < 700 && !live.has(full)) continue;
+        const head = readFirstLine(full);
+        const meta = head ? JSON.parse(head) : {};
+        items.push({
+          name, path: full, size: st.size, mtime: st.mtimeMs,
+          width: meta.width || 80, height: meta.height || 24,
+          cwd: (meta.fanbox && meta.fanbox.cwd) || '',
+          startedAt: (meta.fanbox && meta.fanbox.startedAt) || (meta.timestamp ? meta.timestamp * 1000 : st.birthtimeMs),
+          duration: readLastEventTime(full, st.size), // 原始时长（末事件时间），列表里给用户选片参考
+          recording: live.has(full), // 还在录的会话
+        });
+      } catch { /* 损坏的文件跳过 */ }
+    }
+    items.sort((a, b) => b.startedAt - a.startedAt);
+    return { ok: true, items };
+  } catch (err) { return { ok: false, error: err.message, items: [] }; }
+});
+ipcMain.handle('rec:read', (e, { path: p }) => {
+  try {
+    if (!isInRecDir(p)) return { ok: false, error: '非录制目录' };
+    return { ok: true, text: fs.readFileSync(p, 'utf8') };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle('rec:delete', (e, { path: p }) => {
+  try {
+    if (!isInRecDir(p)) return { ok: false, error: '非录制目录' };
+    fs.rmSync(p, { force: true });
+    return { ok: true };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+ipcMain.handle('rec:reveal', (e, { path: p }) => {
+  try { shell.showItemInFolder(isInRecDir(p) ? p : REC_DIR()); return { ok: true }; }
+  catch (err) { return { ok: false, error: err.message }; }
+});
+// 把导出好的视频/GIF 字节落进录制目录旁，返回真实路径供「在访达显示」
+ipcMain.handle('rec:save-export', (e, { name, buf }) => {
+  try {
+    const dir = path.join(REC_DIR(), 'exports');
+    fs.mkdirSync(dir, { recursive: true });
+    const safe = String(name || 'export.webm').replace(/[/\\:]/g, '_');
+    const dest = uniqueDest(path.join(dir, safe));
+    fs.writeFileSync(dest, Buffer.from(buf));
+    return { ok: true, path: dest };
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+// 导出：渲染层录出的永远是 WebM；要 MP4/GIF 就用本机 ffmpeg 转一道（检测不到 ffmpeg 优雅退回 WebM）。
+function findFfmpeg() {
+  if (process.platform === 'win32') {
+    try { const r = require('child_process').execFileSync('where', ['ffmpeg'], { encoding: 'utf8', timeout: 3000 }).trim().split('\n')[0]; if (r) return r; } catch { /* */ }
+    return null;
+  }
+  for (const c of ['/opt/homebrew/bin/ffmpeg', '/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg']) { try { if (fs.existsSync(c)) return c; } catch { /* */ } }
+  return null;
+}
+ipcMain.handle('rec:export', async (e, { name, buf, format }) => {
+  const { execFile } = require('child_process');
+  const crypto = require('crypto');
+  try {
+    const dir = path.join(REC_DIR(), 'exports');
+    fs.mkdirSync(dir, { recursive: true });
+    const base = String(name || 'export').replace(/[/\\:]/g, '_').replace(/\.[a-z0-9]+$/i, '').slice(0, 120);
+    const tmp = path.join(dir, '.tmp-' + process.pid + '-' + crypto.randomBytes(3).toString('hex') + '.webm');
+    fs.writeFileSync(tmp, Buffer.from(buf));
+    const saveWebm = (reason) => { const d = uniqueDest(path.join(dir, base + '.webm')); fs.renameSync(tmp, d); return { ok: true, path: d, format: 'webm', fellBack: reason || null }; };
+    if (format === 'webm') return saveWebm();
+    const ff = findFfmpeg();
+    if (!ff) return saveWebm('未检测到 ffmpeg，已存 WebM');
+    const run = (args) => new Promise((res, rej) => execFile(ff, args, { timeout: 180000 }, (err, so, se) => (err ? rej(new Error((se || err.message || '').slice(0, 300))) : res())));
+    try {
+      if (format === 'mp4') {
+        const dest = uniqueDest(path.join(dir, base + '.mp4'));
+        // 偶数宽高（yuv420p 要求）+ faststart（边下边播）
+        await run(['-y', '-i', tmp, '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', dest]);
+        fs.rmSync(tmp, { force: true });
+        return { ok: true, path: dest, format: 'mp4' };
+      }
+      if (format === 'gif') {
+        const dest = uniqueDest(path.join(dir, base + '.gif'));
+        const pal = tmp + '.png';
+        // 两遍调色板，GIF 才不糊不抖；宽度封到 900，15fps，体积友好
+        await run(['-y', '-i', tmp, '-vf', 'fps=15,scale=900:-1:flags=lanczos,palettegen=stats_mode=diff', pal]);
+        await run(['-y', '-i', tmp, '-i', pal, '-lavfi', 'fps=15,scale=900:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3', dest]);
+        fs.rmSync(tmp, { force: true }); fs.rmSync(pal, { force: true });
+        return { ok: true, path: dest, format: 'gif' };
+      }
+    } catch (convErr) { try { return saveWebm('转码失败（' + convErr.message + '），已存 WebM'); } catch { /* */ } }
+    return saveWebm();
+  } catch (err) { return { ok: false, error: err.message }; }
+});
+function isInRecDir(p) {
+  try { const r = path.resolve(REC_DIR()); return p && path.resolve(p).startsWith(r + path.sep); }
+  catch { return false; }
+}
+// 只读文件头一行（.cast 头），不把整个大文件读进内存
+function readFirstLine(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(8192);
+    const n = fs.readSync(fd, buf, 0, buf.length, 0);
+    const s = buf.slice(0, n).toString('utf8');
+    const nl = s.indexOf('\n');
+    return nl >= 0 ? s.slice(0, nl) : s;
+  } finally { fs.closeSync(fd); }
+}
+// 读文件尾，取最后一条事件的时间戳 = 原始时长（不把大文件整读进内存）
+function readLastEventTime(file, size) {
+  try {
+    const len = Math.min(4096, size);
+    const fd = fs.openSync(file, 'r');
+    try {
+      const buf = Buffer.alloc(len);
+      fs.readSync(fd, buf, 0, len, Math.max(0, size - len));
+      const lines = buf.toString('utf8').split('\n').map((l) => l.trim()).filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try { const v = JSON.parse(lines[i]); if (Array.isArray(v) && typeof v[0] === 'number') return v[0]; } catch { /* 末行可能被截断，往前找 */ }
+      }
+    } finally { fs.closeSync(fd); }
+  } catch { /* */ }
+  return 0;
+}
 
 // lsof 在非 UTF-8 locale 下会把中文路径按字节转义成 \xe8 字面量（GUI 启动的 app 不继承 shell 的 locale，
 // 正中这个坑：标签标题乱码、双击定位失效）。调 lsof 时显式给 UTF-8 locale，这里再留一层 \xNN 解码兜底
