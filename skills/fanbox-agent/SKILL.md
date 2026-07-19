@@ -72,6 +72,13 @@ curl "${CT[@]}" -X POST -H 'Content-Type: application/json' \
 curl "${CT[@]}" -X POST -H 'Content-Type: application/json' -d '{"id":"t5"}' "$FANBOX_CTL/kill"
 ```
 
+## 子窗口的 claude 卡在确认框怎么办
+
+新窗口里的 claude 默认权限模式会在写文件/跑命令前停下等确认，没人替它点就永远卡着（wait 只会 timeout 或 quiet）。两条路：
+
+- **开窗时就放权**（实验场景推荐）：autorun 用 `claude --permission-mode acceptEdits "任务"`（文件编辑自动同意，跑命令仍确认）；用户明确授权全自动时才用 `claude --dangerously-skip-permissions "任务"`
+- **替它按确认**：wait 返回后 read 尾部，看到「Do you want …?」「❯ 1. Yes」这类选择框就是卡在确认——发 `{"id":"tN","text":"","submit":true}`（回车 = 确认当前选中项），或数字直选如 `{"id":"tN","text":"2","submit":false}`（TUI 选择框数字键即按即生效，**别带回车**，多出的回车会误触下一个状态）
+
 ## 多窗口并行实验套路
 
 1. `create` × N 个窗口，不同 `cwd` 或不同 `autorun` 方案
