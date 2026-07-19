@@ -11,6 +11,8 @@
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-07-18
+
 ### Added
 - **Agent 控制接口（`/api/agent/*`）**：让跑在翻箱终端里的 coding agent 指挥兄弟窗口——列出所有终端（目录/前台进程/忙闲/最近输出）、读取输出（去 ANSI，最多 2000 行）、发送指令（支持 bracketed paste 整块喂 TUI）、新开终端窗口（可 `autorun` 开窗即执行）、长轮询等任务跑完（裸 shell 空闲 / 输出静默 / 正则命中三种判定）、关闭窗口。安全模型：token 每次启动随机生成、不落盘，只注入翻箱自开终端的环境变量（`FANBOX_TERM_ID` / `FANBOX_CTL` / `FANBOX_CTL_TOKEN`）——能力边界 = FanBox 进程树，本机其他进程拿不到门票，远程更够不着。被遥控的 tab 闪 8 秒 ⚡ 标记。配套 `skills/fanbox-agent` skill（curl 速查 + 多窗口并行实验套路），设置面板（⚙）「Agent 互控」一键装进 `~/.claude/skills`、内容更新时显示「可更新」。设计文档见 `docs/12-Agent控制接口-本机HTTP.md`
 
