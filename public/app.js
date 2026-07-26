@@ -1401,10 +1401,28 @@ async function mdEditor(e, data, mode = 'rich') {
         } catch (err) { setStatus('导出失败'); toast('导出失败：' + (err.message || err), true); }
         finally { btn.disabled = false; }
       };
+      // 分节多图：小红书一条笔记发的是多图不是单张。按 h2 切，编号连续落在文章旁边
+      const exportSlices = async (btn) => {
+        btn.disabled = true;
+        setStatus('切分节…');
+        try {
+          const r = await typeset.exportSlices(content0, e.path, typeset.current(),
+            (i, n, kind) => setStatus(kind === 'slice' ? `生成第 ${i}/${n} 张…` : `处理图片 ${i}/${n}…`));
+          const first = r.paths[0].split('/').pop();
+          setStatus('已导出');
+          // 18 是小红书一条笔记的图片上限，超了得自己挑——只提醒，不替他删
+          if (r.count > 18) toast(`已导出 ${r.count} 张（${first} 起），超过小红书 18 图上限，发之前挑一下`, true);
+          else if (r.failed) toast(`已导出 ${r.count} 张（${first} 起），但 ${r.failed} 张图没取到，图里会缺`, true);
+          else toast(`已导出 ${r.count} 张：${first} 起，就在文章旁边`);
+          if (dirOf(e.path) === state.cwd) refresh(); // 同单张导出：正浏览文章所在目录时文件区才跟上
+        } catch (err) { setStatus('导出失败'); toast('导出失败：' + (err.message || err), true); }
+        finally { btn.disabled = false; }
+      };
       // 其余去向：剪贴板类/导出类自己干，平台类递一条指令给终端里的 agent（FanBox 不碰任何平台凭证）
       $('#ts-more').onclick = (ev) => (ev.stopPropagation(), popupMenu(ev, [ // 不拦的话这次点击会冒泡到 document，把刚弹出的菜单当场关掉
         { label: '复制到 X', fn: () => copy($('#ts-more'), () => typeset.copyX(content0, e.path)) },
         { label: '导出长图', fn: () => exportLong($('#ts-more')) },
+        { label: '导出长图（分节）', fn: () => exportSlices($('#ts-more')) },
         { sep: true },
         ...typeset.handoffs().map((d) => ({ label: d.label, fn: () => term.sendPrompt(d.prompt(e.path)) })),
       ]));

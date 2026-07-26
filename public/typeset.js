@@ -351,15 +351,17 @@ window.typeset = (() => {
     throw new Error('同名长图太多，清理一下再导');
   }
 
-  async function exportImage(md, srcPath, styleId, onStep) {
-    const cfg = all()[has(styleId) ? styleId : DEFAULT_ID];
-    const root = build(md, srcPath, styleId);
-    const stat = await inlineImages(root, onStep);
-    const bg = ((cfg.styles.container.match(/background-color:\s*([^;!]+)/) || [])[1] || '#fff').trim();
-    // 屏外量高：SVG 里没有滚动，得先知道整篇排完有多高。量与画同一引擎同一宽度，结果一致
+  // 主题容器上抠底色和正文色：长图要把底色铺到 750 全宽（容器只有 680~740），页码要跟着正文色走
+  const themeBg = (cfg) => ((cfg.styles.container.match(/background-color:\s*([^;!]+)/) || [])[1] || '#fff').trim();
+  const themeFg = (cfg) => (((cfg.styles.container.match(/(?:^|;)\s*color:\s*([^;!]+)/) || [])[1]) || '#333').trim();
+
+  // 一片排好版的 DOM → PNG dataUrl。整篇一张和分节多张共用这段，保证两条路产物完全同质。
+  // 注意 node 会被搬进临时容器，调用方别指望它还留在原处。
+  async function renderPng(node, bg) {
+    // 屏外量高：SVG 里没有滚动，得先知道排完有多高。量与画同一引擎同一宽度，结果一致
     const wrap = document.createElement('div');
     wrap.setAttribute('style', `width: ${EXPORT_W}px; background-color: ${bg}; box-sizing: border-box;`);
-    wrap.appendChild(root);
+    wrap.appendChild(node);
     const meas = document.createElement('div');
     meas.setAttribute('style', 'position: fixed; left: -10000px; top: 0;');
     meas.appendChild(wrap);
@@ -389,8 +391,130 @@ window.typeset = (() => {
     ctx.fillStyle = bg; ctx.fillRect(0, 0, cv.width, cv.height); // foreignObject 外的边缘是透明的，先铺一层底色
     ctx.scale(k, k);
     ctx.drawImage(im, 0, 0);
-    const outPath = await savePng(cv.toDataURL('image/png'), srcPath);
+    return { dataUrl: cv.toDataURL('image/png'), height };
+  }
+
+  async function exportImage(md, srcPath, styleId, onStep) {
+    const cfg = all()[has(styleId) ? styleId : DEFAULT_ID];
+    const root = build(md, srcPath, styleId);
+    const stat = await inlineImages(root, onStep);
+    const { dataUrl } = await renderPng(root, themeBg(cfg));
+    const outPath = await savePng(dataUrl, srcPath);
     return { ok: true, path: outPath, ...stat };
+  }
+
+  // ---- 导出长图（分节多图）----
+  // 朋友圈发单张，小红书发多图（一条笔记最多 18 张），是两个场景不是两种实现，所以两个入口都留着。
+  //
+  // 切点取 h2：`##` 是作者自己在 md 里划的分节线，比按像素高度盲切靠谱得多。最小不可分单位是
+  // 顶层块元素（p / h2 / pre / blockquote / ul / 图片网格 table），所以切点永远落在两个块之间，
+  // 一段话不会被拦腰截断——这是本功能唯一的硬约束，上下限规则都得给它让路。
+  // 文章没写 h2 时算法天然退化成「按高度在块边界切」，仍然不切断段落。
+  const SLICE_MIN_H = EXPORT_W;     // 1:1。比这还矮的小节并进下一节——一张三行字的图发出去太小气
+  const SLICE_MAX_H = EXPORT_W * 4; // 1:4。再长手机上就得反复捏合缩放，在块边界强制断开
+
+  // 页码角标：多图是滑着看的，读者需要知道现在第几张、一共几张。只加这一条——
+  // 不重复文章标题（每片开头本来就是它自己的 h2，上下文已经在了，重复标题白占首屏），不加水印。
+  function pageMark(n, total, fg) {
+    const d = document.createElement('div');
+    d.setAttribute('style',
+      `margin: 32px 0 0; text-align: center; font-size: 13px; letter-spacing: 2px; color: ${fg}; opacity: .4;`);
+    d.textContent = `${n} / ${total}`;
+    return d;
+  }
+
+  // 分节多图要「整组连号」：1/2/3…… 中间跳号读者没法知道哪张接哪张。所以先读一眼目录挑一组
+  // 完全空着的名字，而不是像单张那样逐个顺延。和单张共用 `-长图` 命名空间，撞上就整组改挂
+  // `-长图2-1`、`-长图3-1`……旧图一张不覆盖。
+  async function savePngSet(dataUrls, srcPath) {
+    const base = (String(srcPath).split(/[/\\]/).pop() || '文章').replace(/\.[^.]+$/, '');
+    const dir = String(srcPath).replace(/[/\\][^/\\]*$/, '') || '/';
+    let taken = new Set();
+    try {
+      const r = await fetch('/api/list?path=' + encodeURIComponent(dir)).then((x) => x.json());
+      taken = new Set((r.entries || []).map((x) => x.name));
+    } catch { /* 目录读不到就先写第一张探路，image-save 撞名会明确报「已存在」 */ }
+    for (let g = 1; g <= 20; g++) {
+      const names = dataUrls.map((_, i) => `${base}-长图${g > 1 ? g : ''}-${i + 1}.png`);
+      if (names.some((n) => taken.has(n))) continue;
+      const paths = [];
+      for (let i = 0; i < names.length; i++) {
+        const r = await fetch('/api/image-save', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path: srcPath, dataUrl: dataUrls[i], newName: names[i] }),
+        }).then((x) => x.json());
+        if (!r.ok && /已存在/.test(r.error || '') && !i) break; // 第一张就撞名：这组不干净，整组换个号
+        if (!r.ok) throw new Error(r.error || '写盘失败');
+        paths.push(r.path);
+      }
+      if (paths.length === names.length) return paths;
+    }
+    throw new Error('同名长图太多，清理一下再导');
+  }
+
+  async function exportSlices(md, srcPath, styleId, onStep) {
+    const cfg = all()[has(styleId) ? styleId : DEFAULT_ID];
+    const root = build(md, srcPath, styleId);
+    const stat = await inlineImages(root, onStep);
+    const bg = themeBg(cfg);
+    const blocks = Array.from(root.children);
+    if (!blocks.length) throw new Error('文章排出来是空的');
+
+    // 屏外量一次：每个顶层块的起点用 offsetTop，外边距折叠后的真实位置都算进去了
+    const wrap = document.createElement('div');
+    wrap.setAttribute('style', `width: ${EXPORT_W}px; box-sizing: border-box;`);
+    wrap.appendChild(root);
+    const meas = document.createElement('div');
+    meas.setAttribute('style', 'position: fixed; left: -10000px; top: 0;');
+    meas.appendChild(wrap);
+    document.body.appendChild(meas);
+    const tops = blocks.map((el) => el.offsetTop);
+    const totalH = wrap.getBoundingClientRect().height;
+    meas.remove();
+    const edge = (i) => (i < blocks.length ? tops[i] : totalH); // 第 i 块的起点，i 越界就是全文底
+
+    // ① 按 h2 划节。第一个 h2 之前的东西（h1 标题、导语、题图）归第一节
+    const heads = [0, ...blocks.map((el, i) => (el.tagName === 'H2' && i > 0 ? i : -1)).filter((i) => i > 0)];
+    // ② 太矮的并进下一节；末节太矮没有下一节，回头并进上一节
+    const merged = [];
+    heads.forEach((s, k) => {
+      const end = k + 1 < heads.length ? heads[k + 1] : blocks.length;
+      const prev = merged[merged.length - 1];
+      if (prev && edge(prev.end) - edge(prev.start) < SLICE_MIN_H) prev.end = end;
+      else merged.push({ start: s, end });
+    });
+    if (merged.length > 1) {
+      const last = merged[merged.length - 1];
+      if (edge(last.end) - edge(last.start) < SLICE_MIN_H) { merged[merged.length - 2].end = last.end; merged.pop(); }
+    }
+    // ③ 太长的在块边界强制断开，且均分而不是贪心塞满——贪心会在末尾剩一条只有两行字的窄条，
+    //    均分让 n 片各约 h/n。单块本身就超上限（比如一张超高截图）时宁可让它超，也不切开它
+    const groups = [];
+    merged.forEach((g) => {
+      const h = edge(g.end) - edge(g.start);
+      const n = Math.ceil(h / SLICE_MAX_H);
+      if (n <= 1) { groups.push(g); return; }
+      let s = g.start, made = 0;
+      for (let i = g.start + 1; i < g.end && made < n - 1; i++) {
+        if (edge(i) - edge(s) >= h / n) { groups.push({ start: s, end: i }); s = i; made++; }
+      }
+      groups.push({ start: s, end: g.end });
+    });
+
+    const fg = themeFg(cfg);
+    const outs = [];
+    for (let k = 0; k < groups.length; k++) {
+      if (onStep) onStep(k + 1, groups.length, 'slice');
+      const box = root.cloneNode(false); // 浅克隆：主题容器的 padding / 底色 / 字号原样带过来
+      for (let i = groups[k].start; i < groups[k].end; i++) box.appendChild(blocks[i].cloneNode(true));
+      // inlineStyles 只给整篇的第一个元素清了 margin-top，其余片开头的 h2 会顶出一大段空白
+      const first = box.firstElementChild;
+      if (first) first.setAttribute('style', (first.getAttribute('style') || '') + '; margin-top: 0 !important;');
+      if (groups.length > 1) box.appendChild(pageMark(k + 1, groups.length, fg));
+      outs.push(await renderPng(box, bg));
+    }
+    const paths = await savePngSet(outs.map((o) => o.dataUrl), srcPath);
+    return { ok: true, paths, count: paths.length, heights: outs.map((o) => o.height), ...stat };
   }
 
   // 「x 字 · 约 y 分钟」：按排好版的可见文字算，md 语法符号和 frontmatter 都不进数。
@@ -425,5 +549,5 @@ window.typeset = (() => {
     },
   ];
 
-  return { list, current, setCurrent, build, copyWechat, copyX, exportImage, stat, handoffs: () => HANDOFF };
+  return { list, current, setCurrent, build, copyWechat, copyX, exportImage, exportSlices, stat, handoffs: () => HANDOFF };
 })();
