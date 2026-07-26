@@ -690,6 +690,7 @@ async function releasePrepare(b) {
 // 数据源：~/.claude/projects/<munge(cwd)>/*.jsonl + ~/.codex/sessions/**/rollout-*.jsonl（头部 cwd 匹配）
 //        + ~/.kimi-code/session_index.jsonl（全局索引→state.json）+ ~/.local/share/opencode/storage/session/**/ses_*.json（directory 字段匹配）。
 // 单会话解析结果按 (size, mtime) 缓存，再次打开只重解析有变化的文件。统一会话对象 {id, agent, title, firstT, lastT, userMsgs, files, skills}。
+// userMsgs 允许为 null 表示「未统计」（kimi/opencode 只读元数据不解析消息正文），前端遇到 null 不渲染条数；0 保留给「确实数过是零条」。
 const projMemCache = new Map(); // file -> { size, mtimeMs, sess }
 const mungeClaudeDir = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-');
 
@@ -802,7 +803,7 @@ async function listKimiSessions(cwd) {
       if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) { out.push(hit.sess); continue; }
       const d = JSON.parse(await fsp.readFile(fp, 'utf8'));
       const title = String(d.title || d.lastPrompt || '').trim().slice(0, 160);
-      const sess = { id: rec.sessionId, agent: 'kimi', title, firstT: Date.parse(d.createdAt) || 0, lastT: Date.parse(d.updatedAt) || st.mtimeMs, userMsgs: 0, files: [], skills: [] };
+      const sess = { id: rec.sessionId, agent: 'kimi', title, firstT: Date.parse(d.createdAt) || 0, lastT: Date.parse(d.updatedAt) || st.mtimeMs, userMsgs: null, files: [], skills: [] };
       projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess });
       out.push(sess);
     } catch { /* 单条会话坏了不拖垮整个列表 */ }
@@ -837,7 +838,7 @@ async function listOpencodeSessions(cwd) {
       const d = JSON.parse(await fsp.readFile(fp, 'utf8'));
       const dir = String(d.directory || '');
       const t = d.time || {};
-      const sess = { id: String(d.id || path.basename(fp, '.json')), agent: 'opencode', title: String(d.title || '').trim().slice(0, 160), firstT: Number(t.created) || 0, lastT: Number(t.updated) || st.mtimeMs, userMsgs: 0, files: [], skills: [] };
+      const sess = { id: String(d.id || path.basename(fp, '.json')), agent: 'opencode', title: String(d.title || '').trim().slice(0, 160), firstT: Number(t.created) || 0, lastT: Number(t.updated) || st.mtimeMs, userMsgs: null, files: [], skills: [] };
       projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess, dir });
       if (dir === cwd) out.push(sess);
     } catch { /* 单条会话坏了不拖垮整个列表 */ }
