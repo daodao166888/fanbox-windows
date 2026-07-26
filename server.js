@@ -1548,22 +1548,70 @@ async function pruneThumbs(maxBytes = 400 * 1024 * 1024) {
 // 排版档把图片转 base64 时用：渲染进程受同源策略限制，抓不到图床里的外链图，
 // 由本机服务代抓一次（带上源站 referer，绕开常见的防盗链）。只放行 http(s)，只回图片。
 // 代抓目标限定公网：本机服务权限大，不给页面借道探测回环/内网/云元数据地址的机会；响应体设上限防撑爆内存。
+// 三个易被绕过的点都要堵：①IPv6 URL 的 hostname 自带方括号（[::1]），丢给 DNS 查会被泛解析域名放行，
+// 所以 IP 字面量剥括号后直接按网段判、绝不走 DNS；②长写法（0:0:0:0:0:0:0:1）正则会漏，按网段用 BlockList 算，
+// 正则只兜底映射写法；③重定向逐跳校验——follow 模式下中间跳的内网请求已经真实发出去了。
 const PRIVATE_HOST_RE = /^(127\.|10\.|0\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[789]\d|1[01]\d|12[0-7])\.)|^(::1$|::ffff:|f[cd]|fe80:)/i;
+const PRIVATE_NETS = (() => {
+  const bl = new (require('net').BlockList)();
+  [['127.0.0.0', 8], ['10.0.0.0', 8], ['0.0.0.0', 8], ['192.168.0.0', 16], ['169.254.0.0', 16], ['172.16.0.0', 12], ['100.64.0.0', 10]]
+    .forEach(([a, p]) => bl.addSubnet(a, p, 'ipv4'));
+  // 注意别加 ::ffff:0:0/96：BlockList 会把普通 IPv4 也算进这条 v6 规则，公网图会被全拦。映射地址在下面单独拆。
+  [['::1', 128], ['fc00::', 7], ['fe80::', 10]]
+    .forEach(([a, p]) => bl.addSubnet(a, p, 'ipv6'));
+  return bl;
+})();
+// ::ffff:127.0.0.1 和 ::ffff:7f00:1 是同一个回环的两种写法，取出内嵌的 v4 再判
+function unmapV4(ip) {
+  const m = /^::ffff:(.+)$/i.exec(ip);
+  if (!m) return null;
+  if (require('net').isIPv4(m[1])) return m[1];
+  const hex = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(m[1]);
+  if (!hex) return null;
+  const n = (parseInt(hex[1], 16) << 16) | parseInt(hex[2], 16);
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.');
+}
+function isPrivateIp(ip) {
+  const fam = require('net').isIP(ip);
+  if (!fam) return false;
+  if (fam === 6) {
+    const v4 = unmapV4(ip);
+    if (v4) return isPrivateIp(v4);
+    return PRIVATE_NETS.check(ip, 'ipv6') || PRIVATE_HOST_RE.test(ip);
+  }
+  return PRIVATE_NETS.check(ip, 'ipv4') || PRIVATE_HOST_RE.test(ip);
+}
 async function assertPublicHost(hostname) {
-  const addrs = await require('dns').promises.lookup(hostname, { all: true, verbatim: true });
-  if (!addrs.length || addrs.some((a) => PRIVATE_HOST_RE.test(a.address))) throw new Error('只代抓公网图片地址');
+  const bare = String(hostname || '').replace(/^\[|\]$/g, ''); // IPv6 hostname 形如 [::1]
+  if (require('net').isIP(bare)) {
+    if (isPrivateIp(bare)) throw new Error('只代抓公网图片地址');
+    return;
+  }
+  const addrs = await require('dns').promises.lookup(bare, { all: true, verbatim: true });
+  if (!addrs.length || addrs.some((a) => isPrivateIp(a.address))) throw new Error('只代抓公网图片地址');
 }
 const PROXY_IMG_MAX_BYTES = 20 * 1024 * 1024;
+const PROXY_IMG_MAX_HOPS = 5;
 async function proxyImage(res, url) {
   try {
     if (!/^https?:\/\//i.test(url || '')) return sendJSON(res, 400, { error: '只支持 http(s) 图片' });
-    await assertPublicHost(new URL(url).hostname);
-    const r = await fetch(url, {
-      redirect: 'follow',
-      headers: { 'user-agent': 'Mozilla/5.0', referer: new URL(url).origin + '/' },
-      signal: AbortSignal.timeout(20000),
-    });
-    await assertPublicHost(new URL(r.url || url).hostname); // 重定向可能被引去内网，落点再验一次
+    let target = url; let r = null;
+    for (let hop = 0; hop <= PROXY_IMG_MAX_HOPS; hop++) {
+      await assertPublicHost(new URL(target).hostname); // 每一跳发请求前都校验，重定向进内网直接断
+      r = await fetch(target, {
+        redirect: 'manual',
+        headers: { 'user-agent': 'Mozilla/5.0', referer: new URL(target).origin + '/' },
+        signal: AbortSignal.timeout(20000),
+      });
+      if (![301, 302, 303, 307, 308].includes(r.status)) break;
+      const loc = r.headers.get('location');
+      if (!loc) break;
+      try { await r.body?.cancel(); } catch { /* 重定向响应体直接丢弃 */ }
+      target = new URL(loc, target).href;
+      if (!/^https?:$/i.test(new URL(target).protocol)) return sendJSON(res, 502, { error: '重定向到了非 http(s) 地址' });
+      r = null; // 循环耗尽仍是重定向时以此为凭
+    }
+    if (!r) return sendJSON(res, 502, { error: '重定向次数过多' });
     const type = r.headers.get('content-type') || '';
     if (!r.ok || !/^image\//i.test(type)) return sendJSON(res, 502, { error: '抓不到这张图（HTTP ' + r.status + '）' });
     if (Number(r.headers.get('content-length') || 0) > PROXY_IMG_MAX_BYTES) return sendJSON(res, 502, { error: '图片超过 20MB，不代抓' });
