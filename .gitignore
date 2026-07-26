@@ -9,6 +9,10 @@ build/*
 !build/icon.ico
 !build/entitlements.mac.plist
 
+# agent 测试时误落根目录的产物副本（正身在 public/ 与 public/vendor/）
+/app.js
+/milkdown.js
+
 # 系统与编辑器
 .DS_Store
 *.log
