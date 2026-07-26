@@ -1478,6 +1478,26 @@ async function pruneThumbs(maxBytes = 400 * 1024 * 1024) {
   } catch { /* 目录不存在等，忽略 */ }
 }
 
+// 排版档把图片转 base64 时用：渲染进程受同源策略限制，抓不到图床里的外链图，
+// 由本机服务代抓一次（带上源站 referer，绕开常见的防盗链）。只放行 http(s)，只回图片。
+async function proxyImage(res, url) {
+  try {
+    if (!/^https?:\/\//i.test(url || '')) return sendJSON(res, 400, { error: '只支持 http(s) 图片' });
+    const r = await fetch(url, {
+      redirect: 'follow',
+      headers: { 'user-agent': 'Mozilla/5.0', referer: new URL(url).origin + '/' },
+      signal: AbortSignal.timeout(20000),
+    });
+    const type = r.headers.get('content-type') || '';
+    if (!r.ok || !/^image\//i.test(type)) return sendJSON(res, 502, { error: '抓不到这张图（HTTP ' + r.status + '）' });
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
+    res.end(buf);
+  } catch (e) {
+    sendJSON(res, 502, { error: String((e && e.message) || e) });
+  }
+}
+
 async function serveThumb(req, res, p, size) {
   let src;
   try { src = resolvePath(p); } catch { res.writeHead(400); res.end('bad path'); return; }
@@ -2291,6 +2311,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/thumb') {
       return serveThumb(req, res, qp.get('path'), parseInt(qp.get('w') || '240', 10));
+    }
+    if (p === '/api/img-proxy') {
+      return proxyImage(res, qp.get('url'));
     }
     if (p === '/api/search') {
       return sendJSON(res, 200, await searchFiles(qp.get('q'), qp.get('root') || HOME));

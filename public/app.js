@@ -1335,6 +1335,68 @@ async function mdEditor(e, data, mode = 'rich') {
     };
     const host = $('#ed-host');
     if (m === 'rich') {
+    const hostCls = { rich: 'crepe-host', read: 'read-host', code: 'mona-host', typeset: 'typeset-host' }[m];
+    const seg = (id, label, on) =>
+      `<button class="seg-btn${m === id ? ' active' : ''}" data-m="${id}"${on ? '' : ' disabled title="此文件含富文本无法无损保存的语法，改请用源码"'}>${label}</button>`;
+    const hint = m === 'typeset' ? '排好了直接粘进公众号'
+      : m === 'read' ? (forceCode ? '只读 · 此文件富文本往返有损，要改请点源码' : '只读 · 要改请点富文本或源码')
+        : '自动保存 · ⌘S 立即保存';
+    // 排版档才出样式选择和出口按钮：其余三档的工具栏保持原样，不给写作过程添噪音。
+    // 公众号是主战场，主动作外露一键直达；其余去向收进「送去…」，菜单短到一眼看完
+    const tsBar = m === 'typeset'
+      ? `<select id="ts-style" class="ts-select">${typeset.list().map((s) =>
+        `<option value="${s.id}"${s.id === typeset.current() ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>` +
+        `<button id="ts-wechat" class="primary">复制到公众号</button><button id="ts-more">送去… ▾</button>` +
+        `<span id="ts-stat" class="editor-hint"></span>`
+      : '';
+    body.innerHTML =
+      `<div class="editor-bar"><div class="ed-modes">${seg('rich', '富文本', !forceCode)}${seg('read', '阅读', true)}${seg('code', '源码', true)}${seg('typeset', '排版', true)}</div>` +
+      tsBar +
+      `<span id="md-status" class="editor-hint">${hint}</span></div>` +
+      `<div id="ed-host" class="${hostCls}"></div>`;
+    body.querySelectorAll('.ed-modes .seg-btn').forEach((b) => {
+      if (b.disabled || b.dataset.m === m) return;
+      b.onclick = async () => {
+        await flush();
+        const cur = getValue ? getValue() : content0;
+        if (cur !== baseline) content0 = cleanImgUrls(cur); // 只有真编辑过才采纳编辑器的值（顺手还原拖入图片的内部 URL）；没改就保留磁盘原文，不被 Milkdown 规范化
+        render(b.dataset.m);
+      };
+    });
+    const host = $('#ed-host');
+    if (m === 'typeset') {
+      // 排版档只读：这里看到的就是粘出去的样子，改字回富文本或源码
+      const paint = () => {
+        host.innerHTML = '';
+        const box = typeset.build(content0, e.path, typeset.current());
+        host.appendChild(box);
+        $('#ts-stat').textContent = typeset.stat(box); // 发文前每次都想知道的两个数
+      };
+      paint();
+      getValue = () => content0;
+      const sel = $('#ts-style');
+      sel.onchange = () => { typeset.setCurrent(sel.value); paint(); };
+      const copy = async (btn, job) => {
+        btn.disabled = true;
+        try {
+          const r = await job((i, n) => setStatus(`处理图片 ${i}/${n}…`));
+          if (!r.ok) { setStatus('复制失败'); toast('复制失败，点一下窗口再试', true); }
+          else if (r.failed) { setStatus('已复制'); toast(`已复制，但 ${r.failed} 张图没取到，粘过去会缺图`, true); }
+          else { setStatus('已复制'); toast('已复制，去编辑器粘贴就行'); }
+        } catch (err) { setStatus('复制失败'); toast('复制失败：' + (err.message || err), true); }
+        finally { btn.disabled = false; }
+      };
+      $('#ts-wechat').onclick = (ev) => copy(ev.currentTarget, (onStep) => typeset.copyWechat(content0, e.path, typeset.current(), onStep));
+      // 其余去向：剪贴板类自己干，平台类递一条指令给终端里的 agent（FanBox 不碰任何平台凭证）
+      $('#ts-more').onclick = (ev) => (ev.stopPropagation(), popupMenu(ev, [ // 不拦的话这次点击会冒泡到 document，把刚弹出的菜单当场关掉
+        { label: '复制到 X', fn: () => copy($('#ts-more'), () => typeset.copyX(content0, e.path)) },
+        { sep: true },
+        ...typeset.handoffs().map((d) => ({ label: d.label, fn: () => term.sendPrompt(d.prompt(e.path)) })),
+      ]));
+    } else if (m === 'read') {
+      host.appendChild(mdReadBody(content0, e.path));
+      getValue = () => content0; // 只读：永远不脏，自动保存链路自然空转
+    } else if (m === 'rich') {
       const C = await crepe.load();
       if (!C) { render('code'); return; } // Crepe 加载失败 → 源码模式兜底
       // 保护 YAML frontmatter：Crepe 不识别会丢掉，剥离后只把正文交给它，保存时再拼回
@@ -2594,6 +2656,21 @@ const term = {
       const s = this.sessions.find((x) => x.id === this.active); if (s) s.xterm.focus();
     };
     if (wasHidden) setTimeout(write, 300); else write();
+  },
+  // 把一条现成指令递给终端里的 agent（排版档的「送去…」用）：只粘不回车——
+  // 用户看得见指令原文、能改能拒，发布这种不可逆动作永远不由 FanBox 代按。
+  async sendPrompt(text) {
+    if (!this.available()) { toast('内嵌终端不可用（网页版没有终端）', true); return; }
+    if (!this.sessions.length || !this.active) { toast('先在右边开个终端、启动 agent，再送稿', true); return; }
+    const cur = this.sessions.find((x) => x.id === this.active);
+    if (!cur || cur.dead) { toast('当前终端标签已经关了', true); return; }
+    // 裸 shell 接不住自然语言，打进去只会 command not found——沿用「不往运行中的程序里乱打字」的老规矩
+    if (await this.isPlainShell(cur)) { toast('当前标签是裸 shell，先启动 Claude Code 或 Codex 再送', true); return; }
+    const wasHidden = $('#terminal-panel').classList.contains('hidden');
+    if (wasHidden) this.open();
+    const write = () => { this.input(this.active, '\x1b[200~' + text + '\x1b[201~'); cur.xterm.focus(); };
+    if (wasHidden) setTimeout(write, 300); else write();
+    toast('指令已递进终端，看一眼没问题就回车');
   },
   // 用户输入统一入口：记 lastInput 供回显过滤（击键/粘贴/拖路径/跟随 cd 引发的重绘不算 agent 干活）
   input(id, d) {

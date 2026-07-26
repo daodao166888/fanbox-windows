@@ -690,6 +690,39 @@ kbd {
 .editor-bar button.ghost-btn:hover { color: var(--text); border-color: var(--accent); }
 .editor-bar button:disabled { opacity: 0.32; cursor: default; pointer-events: none; }
 .editor-hint { font-size: 11px; color: var(--text-faint); margin-left: auto; }
+/* 富文本 / 阅读 / 源码 三档：连成一条，当前档实心 */
+.ed-modes { display: inline-flex; }
+.editor-bar .ed-modes .seg-btn { padding: 5px 13px; border-radius: 0; margin-left: -1px; color: var(--text-dim); }
+.editor-bar .ed-modes .seg-btn:first-child { border-radius: 7px 0 0 7px; margin-left: 0; }
+.editor-bar .ed-modes .seg-btn:last-child { border-radius: 0 7px 7px 0; }
+.editor-bar .ed-modes .seg-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); z-index: 1; }
+.editor-bar .ed-modes .seg-btn.active {
+  background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; z-index: 1;
+}
+/* md 只读阅读体：和编辑器同一块地界，滚动自己管 */
+.read-host {
+  height: calc(100vh - 184px); min-height: 360px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
+  padding: 22px 26px; box-sizing: border-box; animation: edIn 0.18s ease;
+}
+.read-host .md-body { max-width: 760px; }
+.read-host .md-body img { max-width: 100%; height: auto; border-radius: 6px; }
+/* 排版档：文章按主题自带的白底/米底铺在深色工作区上，像一张放在桌面上的纸。
+   内部一律用内联样式（要粘到公众号），皮肤的 CSS 变量在这里一概不参与 */
+.typeset-host {
+  height: calc(100vh - 184px); min-height: 360px; overflow: auto;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-3); padding: 20px; box-sizing: border-box; animation: edIn 0.18s ease;
+}
+.typeset-host > div {
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.22); border-radius: 4px;
+  background-color: #fff; /* 主题没写底色时的兜底，免得深色皮肤下透出工作区背景 */
+}
+.ts-select {
+  padding: 5px 8px; border-radius: 7px; font-size: 12px; max-width: 190px;
+  border: 1px solid var(--border); background: var(--bg-3); color: var(--text); cursor: pointer;
+}
+.ts-select:focus { outline: none; border-color: var(--accent); }
 .editor-area {
   width: 100%; box-sizing: border-box; min-height: 60vh; resize: vertical;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);

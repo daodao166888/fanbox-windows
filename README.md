@@ -132,8 +132,12 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 
 ### Editing · WYSIWYG / 编辑 · 所见即所得
 
-- **Markdown** — Milkdown Crepe 提供 Notion 式所见即所得，打开就是编辑态，停笔 0.8 秒自动保存。顶部 `富文本 / 阅读 / 源码` 三档随时切；少数文件富文本往返会丢内容（校验不过），只灰掉富文本、默认落在只读阅读模式，文章照看，要改点源码。  
-  Milkdown Crepe, Notion-style WYSIWYG; opens in edit mode, auto-saves 0.8s after you stop typing. A `Rich / Read / Source` switch sits on top; when a file can't survive a WYSIWYG round-trip, only Rich is disabled — it falls back to the rendered read-only view, not raw source.
+- **Markdown** — Milkdown Crepe 提供 Notion 式所见即所得，打开就是编辑态，停笔 0.8 秒自动保存。顶部 `富文本 / 阅读 / 源码 / 排版` 四档随时切；少数文件富文本往返会丢内容（校验不过），只灰掉富文本、默认落在只读阅读模式，文章照看，要改点源码。  
+  Milkdown Crepe, Notion-style WYSIWYG; opens in edit mode, auto-saves 0.8s after you stop typing. A `Rich / Read / Source / Typeset` switch sits on top; when a file can't survive a WYSIWYG round-trip, only Rich is disabled — it falls back to the rendered read-only view, not raw source.
+- **排版档 · 一键进公众号 / Typeset — one click into WeChat** — 20 套排版主题（来自 [editor.huasheng.ai](https://editor.huasheng.ai)），选好样式点「复制到公众号」，粘进公众号后台即成稿：样式全内联、图片自动转 base64（本地图和图床外链都行）、连续多图排成表格网格、带底色主题自动补背景层。排版档里看到的就是粘出去的，不存在预览与成稿不一致。工具栏顺带给出「x 字 · 约 y 分钟」。  
+  20 typeset themes (from [editor.huasheng.ai](https://editor.huasheng.ai)). Pick one, hit *Copy for WeChat*, paste into the WeChat editor — styles fully inlined, images inlined as base64 (local files and remote hosts alike), consecutive images laid out as a table grid, tinted themes get a background wrapper. What you see in Typeset is exactly what gets pasted; word count and reading time sit in the toolbar.
+- **送去… / Send to…** — 其余去向收在一个菜单里：「复制到 X」按 X Articles 的标签白名单清洗；飞书文档、X Articles·渡口、B站专栏·渡口则把一条明文指令递给终端里的 agent 去跑（需装 `lark-doc` / `dukou` skill）。FanBox 自己不存任何平台凭证、不内建任何第三方 SDK，指令只粘不回车——你看得见、能改、能拒，最后那一下永远由人来点。  
+  Other destinations live in one menu: *Copy for X* sanitizes to the X Articles whitelist; Feishu docs and Dukou (X Articles / Bilibili) hand a plain-text instruction to the agent running in your terminal instead. FanBox stores no platform credentials and bundles no third-party SDK; the instruction is pasted without a newline — visible, editable, refusable. You press the final key, always.
 - **代码/JSON / Code/JSON** — Monaco 编辑器（VS Code 同款内核），随皮肤切换主题。  
   Monaco (the VS Code core), themed per skin.
 - **图片标注 / Image annotation** — 画笔/箭头/文字/打码、格式转换、压缩、调分辨率，覆盖原图前有确认。  
