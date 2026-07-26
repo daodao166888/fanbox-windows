@@ -178,15 +178,17 @@ async function fetchLatestRelease() {
     });
     if (res.ok) {
       const rel = await res.json();
-      if (rel.tag_name) return { tag: rel.tag_name, url: rel.html_url || REL_PAGE };
+      // 顺带带上资产清单（网页兜底那条路拿不到，那时为 null 表示「不知道」）
+      if (rel.tag_name) return { tag: rel.tag_name, url: rel.html_url || REL_PAGE, assets: (rel.assets || []).map((a) => a.name) };
     }
   } catch { /* 走兜底 */ }
   const res = await net.fetch(REL_PAGE, { headers: { 'User-Agent': 'fanbox-app' } });
   const m = String(res.url || '').match(/\/releases\/tag\/([^/?#]+)/);
-  if (m) return { tag: decodeURIComponent(m[1]), url: res.url };
+  if (m) return { tag: decodeURIComponent(m[1]), url: res.url, assets: null };
   return null;
 }
 let pendingUpdate = null; // 渲染层晚注册监听也能拉到（启动 6 秒的推送 vs init 加载大目录，谁先谁后说不准）
+let latestAssets = null; // 最新 Release 的资产文件名清单；null = 没拿到（走了网页兜底），此时不拦下载
 let updRetry = 0;
 let lastAutoCheck = 0;
 async function checkUpdate(opts) {
@@ -207,6 +209,7 @@ async function checkUpdate(opts) {
   const newer = cmpVer(info.tag, app.getVersion()) > 0;
   if (newer) {
     pendingUpdate = { version: info.tag.replace(/^v/, ''), url: info.url };
+    latestAssets = Array.isArray(info.assets) ? info.assets : null;
     if (win && !win.isDestroyed()) win.webContents.send('update:available', pendingUpdate);
   }
   if (manual) {
@@ -228,6 +231,51 @@ async function checkUpdate(opts) {
 }
 ipcMain.handle('update:open', (e, { url }) => { if (/^https:\/\/github\.com\//.test(String(url))) shell.openExternal(url); });
 ipcMain.handle('update:get', () => pendingUpdate);
+
+// #26 应用内下载更新：按当前架构拼 dmg 资产地址（发布产物统一 FanBox-<版本>-<arch>.dmg），
+// 下到 ~/Downloads 后直接打开挂载，拖进 Applications 即完成。全自动安装（Squirrel）仍要等 Developer ID 签名
+let updDownloading = false;
+ipcMain.handle('update:download', async (e, { version }) => {
+  if (updDownloading) return { ok: false, error: 'busy' };
+  const ver = String(version || '').replace(/^v/, '');
+  if (!/^\d+\.\d+\.\d+$/.test(ver)) return { ok: false, error: 'bad version' };
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const name = `FanBox-${ver}-${arch}.dmg`;
+  // 这个 Release 没发当前架构的包时（x64 产物最后一次是 v2.5.0），别甩个必然 404 的地址给用户：
+  // 直接开发布页，让渲染层说明一句。资产清单没拿到（走了网页兜底）就不拦，照旧试下载
+  if (latestAssets && pendingUpdate && pendingUpdate.version === ver && !latestAssets.includes(name)) {
+    shell.openExternal(pendingUpdate.url || REL_PAGE);
+    return { ok: false, error: 'no-asset', arch };
+  }
+  const url = `https://github.com/alchaincyf/fanbox/releases/download/v${ver}/${name}`;
+  const dest = path.join(app.getPath('downloads'), name);
+  const send = (m) => { if (win && !win.isDestroyed()) win.webContents.send('update:progress', m); };
+  updDownloading = true;
+  const tmp = dest + '.part';
+  try {
+    const res = await net.fetch(url, { headers: { 'User-Agent': 'fanbox-app' } });
+    if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+    const total = Number(res.headers.get('content-length')) || 0;
+    const out = fs.createWriteStream(tmp);
+    let got = 0, lastPct = -1;
+    for await (const chunk of res.body) {
+      const buf = Buffer.from(chunk);
+      if (!out.write(buf)) await new Promise((r) => out.once('drain', r));
+      got += buf.length;
+      const pct = total ? Math.floor((got / total) * 100) : -1;
+      if (pct !== lastPct) { lastPct = pct; send({ state: 'downloading', pct }); }
+    }
+    await new Promise((resolve, reject) => out.end((err) => (err ? reject(err) : resolve())));
+    await fs.promises.rename(tmp, dest);
+    send({ state: 'done', file: dest });
+    shell.openPath(dest);
+    return { ok: true, file: dest };
+  } catch (err) {
+    fs.promises.unlink(tmp).catch(() => {});
+    send({ state: 'error', error: String((err && err.message) || err) });
+    return { ok: false, error: String((err && err.message) || err) };
+  } finally { updDownloading = false; }
+});
 
 // 点完成通知把 app 拉到前台（渲染层 window.focus() 唤不醒最小化/被遮挡的窗口）
 ipcMain.handle('win:focus', () => {

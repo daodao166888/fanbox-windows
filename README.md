@@ -158,6 +158,11 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 # 克隆仓库
 git clone https://github.com/daodao166888/fanbox-windows.git
 cd fanbox-windows
+> 已用 Developer ID 证书签名 + hardened runtime，并通过 Apple 公证（notarization），**双击直接打开**，不用右键。  
+> Signed with a Developer ID certificate + hardened runtime and notarized by Apple — **just double-click to open**, no right-click workaround needed.
+>
+> 应用内置**更新提醒**：检测到 GitHub 上有新 Release 时，右下角会弹一条提示引导下载，不强更、可对单个版本「不再提醒」。  
+> Built-in **update notifications**: when a new release lands on GitHub, a capsule appears at the bottom right. Never forced; individual versions can be muted.
 
 # 安装依赖（自动创建桌面快捷方式）
 npm install
