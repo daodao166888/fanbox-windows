@@ -1480,17 +1480,33 @@ async function pruneThumbs(maxBytes = 400 * 1024 * 1024) {
 
 // 排版档把图片转 base64 时用：渲染进程受同源策略限制，抓不到图床里的外链图，
 // 由本机服务代抓一次（带上源站 referer，绕开常见的防盗链）。只放行 http(s)，只回图片。
+// 代抓目标限定公网：本机服务权限大，不给页面借道探测回环/内网/云元数据地址的机会；响应体设上限防撑爆内存。
+const PRIVATE_HOST_RE = /^(127\.|10\.|0\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[789]\d|1[01]\d|12[0-7])\.)|^(::1$|::ffff:|f[cd]|fe80:)/i;
+async function assertPublicHost(hostname) {
+  const addrs = await require('dns').promises.lookup(hostname, { all: true, verbatim: true });
+  if (!addrs.length || addrs.some((a) => PRIVATE_HOST_RE.test(a.address))) throw new Error('只代抓公网图片地址');
+}
+const PROXY_IMG_MAX_BYTES = 20 * 1024 * 1024;
 async function proxyImage(res, url) {
   try {
     if (!/^https?:\/\//i.test(url || '')) return sendJSON(res, 400, { error: '只支持 http(s) 图片' });
+    await assertPublicHost(new URL(url).hostname);
     const r = await fetch(url, {
       redirect: 'follow',
       headers: { 'user-agent': 'Mozilla/5.0', referer: new URL(url).origin + '/' },
       signal: AbortSignal.timeout(20000),
     });
+    await assertPublicHost(new URL(r.url || url).hostname); // 重定向可能被引去内网，落点再验一次
     const type = r.headers.get('content-type') || '';
     if (!r.ok || !/^image\//i.test(type)) return sendJSON(res, 502, { error: '抓不到这张图（HTTP ' + r.status + '）' });
-    const buf = Buffer.from(await r.arrayBuffer());
+    if (Number(r.headers.get('content-length') || 0) > PROXY_IMG_MAX_BYTES) return sendJSON(res, 502, { error: '图片超过 20MB，不代抓' });
+    const chunks = []; let total = 0;
+    for await (const chunk of r.body) {
+      total += chunk.length;
+      if (total > PROXY_IMG_MAX_BYTES) return sendJSON(res, 502, { error: '图片超过 20MB，不代抓' });
+      chunks.push(chunk);
+    }
+    const buf = Buffer.concat(chunks);
     res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'no-store' });
     res.end(buf);
   } catch (e) {
