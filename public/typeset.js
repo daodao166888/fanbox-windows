@@ -328,6 +328,72 @@ window.typeset = (() => {
     }
   }
 
+  // ---- 导出长图 ----
+  // 小红书 / 朋友圈 / 即刻要的是图不是文（docs/13 第二层「内建导出」）。
+  // 纯前端零依赖：排好版的 DOM 序列化进 SVG foreignObject → 画上 canvas → PNG 落回文章旁边。
+  // 图片必须先转 data:——SVG 当图片渲染时是隔离环境，不允许再发任何网络请求，不转必然白框。
+
+  const EXPORT_W = 750; // 移动端长图惯例宽度：主题容器 680~740 居中其内，底色由外层铺满
+
+  // 落盘走 /api/image-save（图片编辑器的原子写回，这里借用）：path 传 md 自己，newName 落同目录。
+  // 不覆盖旧图：同名就顺延 -2、-3……导出历史都留着，要清理让人自己清
+  async function savePng(dataUrl, srcPath) {
+    const base = (String(srcPath).split(/[/\\]/).pop() || '文章').replace(/\.[^.]+$/, '');
+    for (let i = 1; i <= 99; i++) {
+      const name = `${base}-长图${i > 1 ? '-' + i : ''}.png`;
+      const r = await fetch('/api/image-save', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: srcPath, dataUrl, newName: name }),
+      }).then((x) => x.json());
+      if (r.ok) return r.path;
+      if (!/已存在/.test(r.error || '')) throw new Error(r.error || '写盘失败');
+    }
+    throw new Error('同名长图太多，清理一下再导');
+  }
+
+  async function exportImage(md, srcPath, styleId, onStep) {
+    const cfg = all()[has(styleId) ? styleId : DEFAULT_ID];
+    const root = build(md, srcPath, styleId);
+    const stat = await inlineImages(root, onStep);
+    const bg = ((cfg.styles.container.match(/background-color:\s*([^;!]+)/) || [])[1] || '#fff').trim();
+    // 屏外量高：SVG 里没有滚动，得先知道整篇排完有多高。量与画同一引擎同一宽度，结果一致
+    const wrap = document.createElement('div');
+    wrap.setAttribute('style', `width: ${EXPORT_W}px; background-color: ${bg}; box-sizing: border-box;`);
+    wrap.appendChild(root);
+    const meas = document.createElement('div');
+    meas.setAttribute('style', 'position: fixed; left: -10000px; top: 0;');
+    meas.appendChild(wrap);
+    document.body.appendChild(meas);
+    const height = Math.ceil(wrap.getBoundingClientRect().height);
+    const xhtml = new XMLSerializer().serializeToString(wrap); // 序列化成良构 XML，<br> 这类空标签自动闭合
+    meas.remove();
+    if (!height) throw new Error('文章排出来是空的');
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${EXPORT_W}" height="${height}">`
+      + `<foreignObject width="100%" height="100%">${xhtml}</foreignObject></svg>`;
+    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
+    let im;
+    try {
+      im = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('长图渲染失败'));
+        img.src = url;
+      });
+      await im.decode().catch(() => { /* 已 onload，decode 报错不拦路 */ });
+    } finally { URL.revokeObjectURL(url); }
+    // 清晰度 2x；超长文章自动降倍率——Chromium canvas 单边上限 65535，越界会静默给空图
+    const k = Math.min(2, 65000 / height);
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(EXPORT_W * k);
+    cv.height = Math.round(height * k);
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, cv.width, cv.height); // foreignObject 外的边缘是透明的，先铺一层底色
+    ctx.scale(k, k);
+    ctx.drawImage(im, 0, 0);
+    const outPath = await savePng(cv.toDataURL('image/png'), srcPath);
+    return { ok: true, path: outPath, ...stat };
+  }
+
   // 「x 字 · 约 y 分钟」：按排好版的可见文字算，md 语法符号和 frontmatter 都不进数。
   // 中文按字数、英文按词数（公众号后台就是这么数的）；400 字/分钟是中文长文的常见语速。
   function stat(el) {
@@ -360,5 +426,5 @@ window.typeset = (() => {
     },
   ];
 
-  return { list, current, setCurrent, build, copyWechat, copyX, stat, handoffs: () => HANDOFF };
+  return { list, current, setCurrent, build, copyWechat, copyX, exportImage, stat, handoffs: () => HANDOFF };
 })();

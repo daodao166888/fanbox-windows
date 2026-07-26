@@ -1387,9 +1387,24 @@ async function mdEditor(e, data, mode = 'rich') {
         finally { btn.disabled = false; }
       };
       $('#ts-wechat').onclick = (ev) => copy(ev.currentTarget, (onStep) => typeset.copyWechat(content0, e.path, typeset.current(), onStep));
-      // 其余去向：剪贴板类自己干，平台类递一条指令给终端里的 agent（FanBox 不碰任何平台凭证）
+      // 导出长图：小红书/朋友圈/即刻要的是图不是文。PNG 落在文章旁边、命名跟着文章走，不覆盖旧图
+      const exportLong = async (btn) => {
+        btn.disabled = true;
+        setStatus('生成长图…');
+        try {
+          const r = await typeset.exportImage(content0, e.path, typeset.current(), (i, n) => setStatus(`处理图片 ${i}/${n}…`));
+          const name = r.path.split('/').pop();
+          setStatus('已导出');
+          if (r.failed) toast(`长图已导出（${name}），但 ${r.failed} 张图没取到，图里会缺`, true);
+          else toast(`长图已导出：${name}，就在文章旁边`);
+          refresh(); // 文件区跟上，导出的 png 立刻可见
+        } catch (err) { setStatus('导出失败'); toast('导出失败：' + (err.message || err), true); }
+        finally { btn.disabled = false; }
+      };
+      // 其余去向：剪贴板类/导出类自己干，平台类递一条指令给终端里的 agent（FanBox 不碰任何平台凭证）
       $('#ts-more').onclick = (ev) => (ev.stopPropagation(), popupMenu(ev, [ // 不拦的话这次点击会冒泡到 document，把刚弹出的菜单当场关掉
         { label: '复制到 X', fn: () => copy($('#ts-more'), () => typeset.copyX(content0, e.path)) },
+        { label: '导出长图', fn: () => exportLong($('#ts-more')) },
         { sep: true },
         ...typeset.handoffs().map((d) => ({ label: d.label, fn: () => term.sendPrompt(d.prompt(e.path)) })),
       ]));
