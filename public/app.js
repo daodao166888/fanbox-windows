@@ -1583,13 +1583,15 @@ async function memoryPanel(dirPath) {
   const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath));
   const body = ov.querySelector('.mem-body');
   if (!d.ok || !d.sessions.length) {
-    body.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex 之后，历史会话会出现在这里</span></div>';
+    body.innerHTML = '<div class="empty-state">这个文件夹还没有 agent 会话记录<br><br><span class="usage-sub">在这里跑过 Claude Code / Codex / Kimi / opencode 之后，历史会话会出现在这里</span></div>';
     return;
   }
+  // 徽标/续接命令从注册表的 sessions 配置读，不再按 agent 逐个硬编码；没配置的兜底成首字母徽标
+  const sessCfg = (agent) => (AGENT_REGISTRY.find((a) => a.id === agent) || {}).sessions || {};
   body.innerHTML = d.sessions.map((s, i) => `
     <div class="mem-sess">
       <div class="mem-head" data-i="${i}">
-        <span class="mem-agent${s.agent === 'codex' ? ' codex' : ''}">${s.agent === 'codex' ? '>_' : 'C'}</span>
+        <span class="mem-agent${s.agent === 'claude' ? '' : ' codex'}">${escapeHtml(sessCfg(s.agent).badge || (s.agent || '?')[0].toUpperCase())}</span>
         <span class="mem-title">${escapeHtml(s.title || '（无标题会话）')}</span>
         <button class="ghost-btn mem-resume" data-i="${i}" title="在内嵌终端里接上这段会话的上下文继续">▶ 续上</button>
       </div>
@@ -1606,7 +1608,8 @@ async function memoryPanel(dirPath) {
   body.querySelectorAll('.mem-resume').forEach((b) => {
     b.onclick = () => {
       const s = d.sessions[Number(b.dataset.i)];
-      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
+      const tpl = sessCfg(s.agent).resumeCmd || 'claude --dangerously-skip-permissions --resume {id}';
+      const cmd = tpl.replace('{id}', s.id);
       close();
       term.runInDir(dirPath, cmd, '已在终端续上会话');
     };
@@ -2148,14 +2151,16 @@ function bindTerminalResizer() {
 //      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
 //      ③ config.json 的 agents 数组做高级自定义：同 id 覆盖内置命令，新 id 追加按钮
 // app: true 的是桌面应用（无终端 CLI 形态，官方确认），按钮改为 open -a 拉起，检测走 open -Ra
+// sessions: 有会话适配器的 agent 声明续接方式——badge 是项目记忆面板的徽标，resumeCmd 里 {id} 占位符替换成会话 id；
+//           没有 sessions 字段 = 该 agent 暂不支持会话回溯（服务端也没有对应适配器）
 const AGENT_REGISTRY = [
-  { id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions', bin: 'claude', install: 'npm install -g @anthropic-ai/claude-code' },
-  { id: 'codex', label: 'Codex', cmd: 'codex', bin: 'codex', install: 'npm install -g @openai/codex' },
+  { id: 'claude', label: 'Claude Code', cmd: 'claude --dangerously-skip-permissions', bin: 'claude', install: 'npm install -g @anthropic-ai/claude-code', sessions: { badge: 'C', resumeCmd: 'claude --dangerously-skip-permissions --resume {id}' } },
+  { id: 'codex', label: 'Codex', cmd: 'codex', bin: 'codex', install: 'npm install -g @openai/codex', sessions: { badge: '>_', resumeCmd: 'codex resume {id}' } },
   { id: 'hermes', label: 'Hermes Agent', cmd: 'hermes', bin: 'hermes', install: 'curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash' },
   { id: 'openclaw', label: 'OpenClaw', cmd: 'openclaw', bin: 'openclaw', install: 'npm install -g openclaw' },
-  { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', bin: 'kimi', install: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash' },
+  { id: 'kimi', label: 'Kimi Code', cmd: 'kimi', bin: 'kimi', install: 'curl -fsSL https://code.kimi.com/kimi-code/install.sh | bash', sessions: { badge: 'K', resumeCmd: 'kimi -S {id}' } },
   { id: 'zcode', label: 'ZCode', cmd: 'open -a ZCode', app: 'ZCode', install: 'https://zcode.z.ai （桌面应用，官网下载 dmg）' },
-  { id: 'opencode', label: 'opencode', cmd: 'opencode', bin: 'opencode', install: 'curl -fsSL https://opencode.ai/install | bash' },
+  { id: 'opencode', label: 'opencode', cmd: 'opencode', bin: 'opencode', install: 'curl -fsSL https://opencode.ai/install | bash', sessions: { badge: 'oc', resumeCmd: 'opencode -s {id}' } },
   { id: 'pi', label: 'pi', cmd: 'pi', bin: 'pi', install: 'curl -fsSL https://pi.dev/install.sh | sh' },
   { id: 'codebuddy', label: 'CodeBuddy', cmd: 'codebuddy', bin: 'codebuddy', install: 'npm install -g @tencent-ai/codebuddy-code' },
   { id: 'workbuddy', label: 'WorkBuddy', cmd: 'workbuddy', bin: 'workbuddy', app: 'WorkBuddy', install: 'https://codebuddy.cn/work （桌面应用，官网下载）' },
