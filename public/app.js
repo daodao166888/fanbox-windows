@@ -1397,7 +1397,7 @@ async function mdEditor(e, data, mode = 'rich') {
           setStatus('已导出');
           if (r.failed) toast(`长图已导出（${name}），但 ${r.failed} 张图没取到，图里会缺`, true);
           else toast(`长图已导出：${name}，就在文章旁边`);
-          refresh(); // 文件区跟上，导出的 png 立刻可见
+          if (dirOf(e.path) === state.cwd) refresh(); // 正浏览文章所在目录时文件区跟上，png 立刻可见；在「最近」视图或别的目录时不刷，toast 已说明 png 就在文章旁边
         } catch (err) { setStatus('导出失败'); toast('导出失败：' + (err.message || err), true); }
         finally { btn.disabled = false; }
       };
