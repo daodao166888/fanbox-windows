@@ -687,8 +687,9 @@ async function releasePrepare(b) {
 }
 
 // ---------- 项目记忆：这个文件夹里 AI 干过什么 ----------
-// 数据源：~/.claude/projects/<munge(cwd)>/*.jsonl + ~/.codex/sessions/**/rollout-*.jsonl（头部 cwd 匹配）。
-// 单会话解析结果按 (size, mtime) 缓存，再次打开只重解析有变化的文件。
+// 数据源：~/.claude/projects/<munge(cwd)>/*.jsonl + ~/.codex/sessions/**/rollout-*.jsonl（头部 cwd 匹配）
+//        + ~/.kimi-code/session_index.jsonl（全局索引→state.json）+ ~/.local/share/opencode/storage/session/**/ses_*.json（directory 字段匹配）。
+// 单会话解析结果按 (size, mtime) 缓存，再次打开只重解析有变化的文件。统一会话对象 {id, agent, title, firstT, lastT, userMsgs, files, skills}。
 const projMemCache = new Map(); // file -> { size, mtimeMs, sess }
 const mungeClaudeDir = (cwd) => cwd.replace(/[^A-Za-z0-9]/g, '-');
 
@@ -781,6 +782,69 @@ async function parseCodexSession(fp, st) {
   return sess;
 }
 
+// Kimi Code 适配器：~/.kimi-code/session_index.jsonl 是现成的全局索引（sessionId → sessionDir + workDir），
+// 按 workDir 过滤后逐个读 state.json 拿标题/时间戳，完全不用碰 wire.jsonl 协议日志。
+// 消息数/改过的文件埋在 wire.jsonl 里（协议带版本号 1.4，会漂移），列表页不值得挖——给默认值。
+const KIMI_HOME = path.join(HOME, '.kimi-code');
+async function listKimiSessions(cwd) {
+  const out = [];
+  let idx;
+  try { idx = await fsp.readFile(path.join(KIMI_HOME, 'session_index.jsonl'), 'utf8'); } catch { return out; } // 没装/没用过 Kimi Code
+  for (const line of idx.split('\n')) {
+    if (!line.includes('"workDir"')) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch { continue; }
+    if (rec.workDir !== cwd || !rec.sessionId || !rec.sessionDir) continue;
+    const fp = path.join(String(rec.sessionDir), 'state.json');
+    try {
+      const st = await fsp.stat(fp);
+      const hit = projMemCache.get(fp);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) { out.push(hit.sess); continue; }
+      const d = JSON.parse(await fsp.readFile(fp, 'utf8'));
+      const title = String(d.title || d.lastPrompt || '').trim().slice(0, 160);
+      const sess = { id: rec.sessionId, agent: 'kimi', title, firstT: Date.parse(d.createdAt) || 0, lastT: Date.parse(d.updatedAt) || st.mtimeMs, userMsgs: 0, files: [], skills: [] };
+      projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess });
+      out.push(sess);
+    } catch { /* 单条会话坏了不拖垮整个列表 */ }
+  }
+  return out;
+}
+
+// opencode 适配器：~/.local/share/opencode/storage/session/<projectID>/ses_*.json 单文件即全部元数据，
+// 按 JSON 里的 directory 字段过滤（目录名是 projectID hash，没法从 cwd 正向算，只能全扫——文件小，先 stat 排序封顶控 IO）。
+// summary.files 只有改动数量没有路径列表，前端要的是可点击的路径，所以 files 给空数组。
+const OPENCODE_SESS = path.join(HOME, '.local', 'share', 'opencode', 'storage', 'session');
+async function listOpencodeSessions(cwd) {
+  const out = [];
+  let projDirs;
+  try { projDirs = await fsp.readdir(OPENCODE_SESS, { withFileTypes: true }); } catch { return out; } // 没装/没用过 opencode
+  const files = [];
+  for (const pd of projDirs) {
+    if (!pd.isDirectory()) continue;
+    let names;
+    try { names = await fsp.readdir(path.join(OPENCODE_SESS, pd.name)); } catch { continue; }
+    for (const n of names) {
+      if (!n.startsWith('ses_') || !n.endsWith('.json')) continue;
+      const fp = path.join(OPENCODE_SESS, pd.name, n);
+      try { files.push({ fp, st: await fsp.stat(fp) }); } catch { /* */ }
+    }
+  }
+  files.sort((a, b) => b.st.mtimeMs - a.st.mtimeMs);
+  for (const { fp, st } of files.slice(0, 200)) {
+    try {
+      const hit = projMemCache.get(fp);
+      if (hit && hit.size === st.size && hit.mtimeMs === st.mtimeMs) { if (hit.dir === cwd) out.push(hit.sess); continue; }
+      const d = JSON.parse(await fsp.readFile(fp, 'utf8'));
+      const dir = String(d.directory || '');
+      const t = d.time || {};
+      const sess = { id: String(d.id || path.basename(fp, '.json')), agent: 'opencode', title: String(d.title || '').trim().slice(0, 160), firstT: Number(t.created) || 0, lastT: Number(t.updated) || st.mtimeMs, userMsgs: 0, files: [], skills: [] };
+      projMemCache.set(fp, { size: st.size, mtimeMs: st.mtimeMs, sess, dir });
+      if (dir === cwd) out.push(sess);
+    } catch { /* 单条会话坏了不拖垮整个列表 */ }
+  }
+  return out;
+}
+
 async function projectMemory(p) {
   const cwd = resolvePath(p);
   const sessions = [];
@@ -814,6 +878,9 @@ async function projectMemory(p) {
       try { if ((await readCwdFromHead(fp, 16384)) === cwd) sessions.push(await parseCodexSession(fp, st)); } catch { /* */ }
     }
   } catch { /* 没用过 Codex */ }
+  // Kimi Code / opencode：适配器内部已各自兜底，这里再包一层——任何一家格式漂移都不拖垮整个面板
+  try { sessions.push(...await listKimiSessions(cwd)); } catch { /* */ }
+  try { sessions.push(...await listOpencodeSessions(cwd)); } catch { /* */ }
   // 没有正经标题的会话（纯 warmup / 空会话）沉底，按最近活跃排
   sessions.sort((a, b) => (b.title ? 1 : 0) - (a.title ? 1 : 0) || b.lastT - a.lastT);
   sessions.sort((a, b) => b.lastT - a.lastT);
