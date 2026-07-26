@@ -626,6 +626,43 @@ kbd {
 .clog-md strong { color: var(--text); }
 .clog-md a { color: var(--accent); }
 .clog-md code { font-size: 11.5px; background: var(--bg-3); padding: 0 4px; border-radius: 4px; }
+
+/* ---------- 定时任务：侧栏计数 + 管理弹层 ---------- */
+.cron-count { display: inline-block; min-width: 15px; text-align: center; font-size: 10px; line-height: 15px; color: var(--accent); background: var(--accent-soft); border-radius: 99px; padding: 0 4px; margin-left: 2px; }
+.cron-count.hidden { display: none; }
+.cron-overlay { padding-top: 10vh; }
+.cron-dialog { width: min(680px, 92vw); max-height: 80vh; display: flex; flex-direction: column; }
+.cron-sub { float: right; font-size: 11px; font-weight: 400; color: var(--text-faint); }
+.cron-body { overflow-y: auto; min-height: 0; }
+.cron-note { font-size: 12px; color: #b98015; background: color-mix(in srgb, #e0a52e 10%, var(--bg-2)); border: 1px solid color-mix(in srgb, #e0a52e 30%, var(--border)); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.cron-row { display: flex; align-items: center; gap: 10px; padding: 10px 6px; border-bottom: 1px solid var(--border); }
+.cron-row.off .cron-main { opacity: 0.5; }
+.cron-main { flex: 1; min-width: 0; }
+.cron-name { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cron-src { font-size: 10.5px; font-weight: 400; font-style: normal; color: var(--text-faint); border: 1px solid var(--border); border-radius: 99px; padding: 0 6px; }
+.cron-full { font-size: 10.5px; font-weight: 400; font-style: normal; color: #b98015; border: 1px solid color-mix(in srgb, #e0a52e 40%, var(--border)); border-radius: 99px; padding: 0 6px; }
+.cron-meta { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cron-last { font-style: normal; }
+.cron-last.ok { color: #2f9e44; }
+.cron-last.bad { color: #e5484d; }
+.cron-last.warn { color: #b98015; }
+.cron-btn { flex: none; font-size: 12px; color: var(--text-dim); background: transparent; border: 1px solid var(--border); border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+.cron-btn:hover { background: var(--bg-3); color: var(--text); }
+.cron-btn.danger:hover { color: #e5484d; border-color: #e5484d; }
+.cron-foot { display: flex; align-items: center; gap: 12px; padding-top: 12px; }
+.cron-add { flex: none; font-size: 12.5px; font-weight: 600; color: var(--accent-ink); background: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+.cron-add:hover { filter: brightness(1.06); }
+.cron-hint { font-size: 11.5px; color: var(--text-faint); line-height: 1.5; }
+/* 编辑表单 */
+.cron-form { display: flex; flex-direction: column; gap: 10px; }
+.cron-fl { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-dim); min-width: 0; }
+.cron-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; }
+.cron-inline { display: flex; align-items: center; gap: 6px; }
+.cron-check { font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.cron-check input { accent-color: var(--accent); }
+.cron-preview { font-size: 12px; color: var(--text); background: var(--bg-3); border-radius: 7px; padding: 7px 10px; min-height: 17px; }
+.cron-form-foot { display: flex; gap: 10px; padding-top: 2px; }
+.cron-form textarea.input-field { resize: vertical; font-family: inherit; }
 .lang-toggle { cursor: pointer; color: var(--text-dim); font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; flex: none; }
 .lang-toggle:hover { color: var(--accent); border-color: var(--accent); }
 

@@ -278,6 +278,7 @@ async function navigate(p, pushHistory = true) {
     state.recentMode = false;
     state.skillsMode = false;
     state.cursor = -1;
+    localStorage.setItem('fb_last_cwd', state.cwd); // 下次启动回到这里
     render();
     renderRootsActive();
     // 联动：监听此目录 + 各终端项目目录的文件变化（agent 改文件→自动刷新）
@@ -2619,9 +2620,9 @@ function bindEvents() {
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
-  $('#term-newtab').onclick = () => term.newTab();
-  $('#term-max').onclick = () => term.toggleMax();
-  // 双击终端顶栏空白处（避开标签/按钮/输入框）= 铺满终端：agent 交互窗口最重要，给它一键放到最大
+=======
+  $('#cron-entry').onclick = () => cronPanel.show();
+  $('#term-newtab').onclick = () => { wechatView.close(); term.newTab(); };
   $('.term-head').addEventListener('dblclick', (ev) => {
     if (ev.target.closest('button, .term-tab, input')) return;
     term.toggleMax();
@@ -2848,6 +2849,28 @@ const term = {
     $('#main-body').classList.remove('fm-squeezed'); // 终端收起后文件区必须回来
     $('#btn-terminal').classList.remove('active');
     localStorage.setItem('fb_term_open', '0');
+  },
+  // 标签布局快照：几个标签、各在哪个目录、谁在前台。renderTabs 是所有标签变化的必经之路，在那里落
+  persistTabs() {
+    try {
+      localStorage.setItem('fb_term_tabs', JSON.stringify({
+        tabs: this.sessions.map((s) => ({ cwd: s.cwd || s.startDir || '' })),
+        active: this.sessions.findIndex((s) => s.id === this.active),
+      }));
+    } catch { /* */ }
+  },
+  // 下次打开时还原上面的快照：进程不复活（shell 全新），但打开就是你离开时的格局
+  async restore(saved) {
+    $('#terminal-panel').classList.remove('hidden');
+    $('#terminal-resizer').classList.remove('hidden');
+    this.applyDock();
+    $('#btn-terminal').classList.add('active');
+    for (const t of (saved.tabs || []).slice(0, 8)) await this.newTab(t.cwd || undefined);
+    const want = this.sessions[saved.active];
+    if (want) this.activate(want.id);
+    if (!this.sessions.length) this.newTab(); // 快照坏了也保证有一个标签
+    player.refreshHint();
+    localStorage.setItem('fb_term_open', '1');
   },
   applyDock() {
     const mb = $('#main-body');
@@ -3456,6 +3479,7 @@ const term = {
     } catch { /* 通知不可用就算了 */ }
   },
   renderTabs() {
+    this.persistTabs(); // 标签的增删/切换/换目录都路过这里，顺手落快照供下次启动还原
     const bar = $('#term-tabs');
     bar.innerHTML = '';
     this.sessions.forEach((s) => {
@@ -4603,6 +4627,223 @@ const verInfo = {
   },
 };
 
+// ---------- 定时任务：到点自动开一个终端窗口跑 agent / 命令（侧栏入口 + 管理弹层）----------
+const cronPanel = {
+  data: null, editing: null, ov: null,
+  WD: ['日', '一', '二', '三', '四', '五', '六'],
+  async syncBadge() {
+    try { this.data = await api('/api/cron'); } catch { return; }
+    const n = (this.data.tasks || []).filter((t) => t.enabled).length;
+    const el = $('#cron-count'); if (!el) return;
+    el.textContent = n; el.classList.toggle('hidden', !n);
+  },
+  async show() {
+    const old = $('.cron-overlay'); if (old) old.remove();
+    const ov = this.ov = document.createElement('div');
+    ov.className = 'input-overlay cron-overlay';
+    ov.innerHTML = `<div class="input-dialog cron-dialog">
+      <div class="input-title">定时任务<span class="cron-sub">到点自动开一个终端窗口干活</span></div>
+      <div class="cron-body"><div class="cmdk-loading">读取任务中…</div></div></div>`;
+    document.body.appendChild(ov);
+    const onKey = (ev) => {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      if (this.editing != null) { this.editing = null; this.render(); } else this.close();
+    };
+    this.close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); this.ov = null; };
+    ov.onclick = (ev) => { if (ev.target === ov) this.close(); };
+    document.addEventListener('keydown', onKey, true);
+    this.editing = null;
+    await this.reload();
+  },
+  async reload() {
+    try { this.data = await api('/api/cron'); } catch { this.data = { tasks: [] }; }
+    if (this.ov) this.render();
+    this.syncBadgeLocal();
+  },
+  syncBadgeLocal() {
+    const n = ((this.data && this.data.tasks) || []).filter((t) => t.enabled).length;
+    const el = $('#cron-count'); if (el) { el.textContent = n; el.classList.toggle('hidden', !n); }
+  },
+  agentLabel(t) { return t.agent === 'codex' ? 'Codex' : t.agent === 'shell' ? 'Shell' : 'Claude Code'; },
+  schedLabel(s) {
+    if (!s) return '';
+    if (s.type === 'at') return '一次 · ' + this.fmtAbs(new Date(s.time).getTime());
+    if (s.type === 'every') { const m = Number(s.minutes) || 0; return m % 60 === 0 ? `每 ${m / 60} 小时` : `每 ${m} 分钟`; }
+    if (s.type === 'cron') {
+      const p = String(s.expr || '').trim().split(/\s+/);
+      if (p.length === 5) {
+        const [mi, h, dom, mon, dow] = p;
+        const hm = () => `${h}:${mi.padStart(2, '0')}`;
+        if (/^\d+$/.test(mi) && /^\d+$/.test(h) && dom === '*' && mon === '*' && dow === '*') return `每天 ${hm()}`;
+        if (/^\d+$/.test(mi) && /^\d+$/.test(h) && dom === '*' && mon === '*' && /^\d$/.test(dow)) return `每周${this.WD[+dow % 7]} ${hm()}`;
+        if (/^\d+$/.test(mi) && h === '*' && dom === '*' && mon === '*' && dow === '*') return `每小时的第 ${+mi} 分钟`;
+        if (/^\d+$/.test(mi) && /^\d+$/.test(h) && /^\d+$/.test(dom) && mon === '*' && dow === '*') return `每月 ${+dom} 日 ${hm()}`;
+      }
+      return 'cron · ' + s.expr;
+    }
+    return '';
+  },
+  fmtAbs(ms) {
+    if (!ms || !isFinite(ms)) return '—';
+    const d = new Date(ms); const now = new Date();
+    const hm = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const sameDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    if (sameDay(d, now)) return `今天 ${hm}`;
+    const tomorrow = new Date(now.getTime() + 86400000);
+    if (sameDay(d, tomorrow)) return `明天 ${hm}`;
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+  },
+  lastBadge(t) {
+    const h = (t.history || [])[0];
+    if (!h) return '';
+    if (h.missed) return `<i class="cron-last warn">上次到点时 FanBox 没开着，跳过了</i>`;
+    if (h.ok) return `<i class="cron-last ok">上次 ${fmtTime(h.t)} ✓</i>`;
+    return `<i class="cron-last bad" title="${escapeHtml(h.error || '')}">上次失败 ✗</i>`;
+  },
+  render() {
+    const body = this.ov.querySelector('.cron-body');
+    if (this.editing != null) return this.renderForm(body);
+    const d = this.data || {}; const tasks = d.tasks || [];
+    body.innerHTML = `${d.desktop === false ? '<div class="cron-note">浏览器版只能管理任务；到点开窗执行需要 FanBox 桌面版开着</div>' : ''}
+      <div class="cron-list">${tasks.map((t) => `
+        <div class="cron-row ${t.enabled ? '' : 'off'}" data-id="${t.id}">
+          <label class="pw-switch ${t.enabled ? 'on' : ''}" data-act="toggle" title="${t.enabled ? '停用（保留任务，不再到点执行）' : '启用'}"><i></i></label>
+          <div class="cron-main">
+            <div class="cron-name">${escapeHtml(t.name)}${t.createdBy === 'agent' ? ' <i class="cron-src">agent 设的</i>' : ''}${t.full ? ' <i class="cron-full" title="全自动：执行时跳过所有确认">全自动</i>' : ''}</div>
+            <div class="cron-meta">${escapeHtml(this.schedLabel(t.schedule))} · ${this.agentLabel(t)} · ${escapeHtml(baseOf(t.cwd || '') || '~')}${t.enabled && t.nextRun ? ` · 下次 ${this.fmtAbs(t.nextRun)}` : ''} ${this.lastBadge(t)}</div>
+          </div>
+          <button class="cron-btn" data-act="run" title="立即执行一次（新开终端窗口）">▶</button>
+          <button class="cron-btn" data-act="edit" title="编辑">编辑</button>
+          <button class="cron-btn danger" data-act="del" title="删除">删除</button>
+        </div>`).join('') || `<div class="empty-state">还没有定时任务<br><br><span class="usage-sub">点下方「新建」，或在终端里对 agent 说一句<br>「每天早上 9 点到写作目录整理灵感箱」</span></div>`}
+      </div>
+      <div class="cron-foot">
+        <button class="cron-add" id="cron-new">＋ 新建定时任务</button>
+        <span class="cron-hint">终端里的 agent 也能帮你设：白话说清「什么时候、去哪个目录、干什么」就行</span>
+      </div>`;
+    body.querySelector('#cron-new').onclick = () => { this.editing = {}; this.render(); };
+    body.querySelectorAll('.cron-row').forEach((row) => {
+      const t = tasks.find((x) => x.id === row.dataset.id);
+      row.querySelector('[data-act=toggle]').onclick = async () => {
+        const r = await apiPost('/api/cron/toggle', { id: t.id, enabled: !t.enabled });
+        if (!r.ok) toast(r.error || '操作失败', true);
+        this.reload();
+      };
+      row.querySelector('[data-act=run]').onclick = async () => {
+        const r = await apiPost('/api/cron/run', { id: t.id });
+        toast(r.ok ? '已开一个终端窗口执行' : (r.error || '执行失败'), !r.ok);
+        this.reload();
+      };
+      row.querySelector('[data-act=edit]').onclick = () => { this.editing = t; this.render(); };
+      const del = row.querySelector('[data-act=del]');
+      del.onclick = async () => {
+        if (!del.dataset.armed) { del.dataset.armed = '1'; del.textContent = '确认删除?'; setTimeout(() => { del.dataset.armed = ''; del.textContent = '删除'; }, 2500); return; }
+        await apiPost('/api/cron/delete', { id: t.id });
+        this.reload();
+      };
+    });
+  },
+  // 编辑表单：六种时间预设 → schedule 对象；保存前实时预告接下来 3 次执行
+  presetOf(s) {
+    if (!s || !s.type) return 'daily';
+    if (s.type === 'at') return 'once';
+    if (s.type === 'every') return 'every';
+    const l = this.schedLabel(s);
+    if (l.startsWith('每天')) return 'daily';
+    if (l.startsWith('每周')) return 'weekly';
+    if (l.startsWith('每小时')) return 'hourly';
+    return 'cron';
+  },
+  renderForm(body) {
+    const t = this.editing;
+    const s = t.schedule || {};
+    const p = String((s.expr || '')).trim().split(/\s+/);
+    const pad = (n) => String(n).padStart(2, '0');
+    const time0 = p.length === 5 && /^\d+$/.test(p[0]) && /^\d+$/.test(p[1]) ? `${pad(p[1])}:${pad(p[0])}` : '09:00';
+    const preset = this.presetOf(s);
+    body.innerHTML = `<div class="cron-form">
+      <label class="cron-fl">想让它干什么<textarea id="cr-prompt" class="input-field" rows="3" placeholder="白话写就行，如：把灵感箱里的碎片整理进对应选题；Shell 模式则填要执行的命令">${escapeHtml(t.prompt || '')}</textarea></label>
+      <div class="cron-grid">
+        <label class="cron-fl">谁来干<select id="cr-agent" class="input-field">
+          <option value="claude" ${t.agent === 'codex' || t.agent === 'shell' ? '' : 'selected'}>Claude Code</option>
+          <option value="codex" ${t.agent === 'codex' ? 'selected' : ''}>Codex</option>
+          <option value="shell" ${t.agent === 'shell' ? 'selected' : ''}>Shell 命令</option>
+        </select></label>
+        <label class="cron-fl">在哪个目录<input id="cr-cwd" class="input-field" value="${escapeHtml(t.cwd || state.cwd || state.home || '')}" /></label>
+      </div>
+      <label class="cron-check" id="cr-full-wrap"><input type="checkbox" id="cr-full" ${t.full ? 'checked' : ''} /> 全自动：跳过所有确认（无人值守时用，agent 会直接改文件、跑命令）</label>
+      <div class="cron-grid">
+        <label class="cron-fl">什么时候<select id="cr-preset" class="input-field">
+          <option value="daily" ${preset === 'daily' ? 'selected' : ''}>每天</option>
+          <option value="weekly" ${preset === 'weekly' ? 'selected' : ''}>每周</option>
+          <option value="hourly" ${preset === 'hourly' ? 'selected' : ''}>每小时</option>
+          <option value="every" ${preset === 'every' ? 'selected' : ''}>每隔一段时间</option>
+          <option value="once" ${preset === 'once' ? 'selected' : ''}>某个时间点，一次</option>
+          <option value="cron" ${preset === 'cron' ? 'selected' : ''}>cron 表达式</option>
+        </select></label>
+        <div class="cron-fl" id="cr-sched-fields"></div>
+      </div>
+      <div class="cron-preview" id="cr-preview"></div>
+      <label class="cron-fl">名称（可不填）<input id="cr-name" class="input-field" value="${escapeHtml(t.name || '')}" placeholder="不填就取任务内容开头" /></label>
+      <div class="cron-form-foot">
+        <button class="cron-add" id="cr-save">保存</button>
+        <button class="cron-btn" id="cr-cancel">取消</button>
+      </div>
+    </div>`;
+    const fields = body.querySelector('#cr-sched-fields');
+    const renderFields = (pr) => {
+      if (pr === 'daily') fields.innerHTML = `<input type="time" id="cr-time" class="input-field" value="${time0}" />`;
+      else if (pr === 'weekly') fields.innerHTML = `<span class="cron-inline"><select id="cr-dow" class="input-field">${this.WD.map((w, i) => `<option value="${i}" ${p[4] == i ? 'selected' : ''}>周${w}</option>`).join('')}</select><input type="time" id="cr-time" class="input-field" value="${time0}" /></span>`;
+      else if (pr === 'hourly') fields.innerHTML = `<span class="cron-inline">第 <input type="number" id="cr-min" class="input-field" min="0" max="59" value="${/^\d+$/.test(p[0]) ? +p[0] : 0}" style="width:64px" /> 分钟</span>`;
+      else if (pr === 'every') { const m = Number(s.minutes) || 120; fields.innerHTML = `<span class="cron-inline">每 <input type="number" id="cr-n" class="input-field" min="1" value="${m % 60 === 0 ? m / 60 : m}" style="width:64px" /> <select id="cr-unit" class="input-field"><option value="60" ${m % 60 === 0 ? 'selected' : ''}>小时</option><option value="1" ${m % 60 === 0 ? '' : 'selected'}>分钟</option></select></span>`; }
+      else if (pr === 'once') { const v = s.time ? s.time.slice(0, 16) : ''; fields.innerHTML = `<input type="datetime-local" id="cr-at" class="input-field" value="${escapeHtml(v)}" />`; }
+      else fields.innerHTML = `<input id="cr-expr" class="input-field" value="${escapeHtml(s.expr || '0 9 * * *')}" placeholder="分 时 日 月 周，如 30 8 * * 1-5" />`;
+      fields.querySelectorAll('input,select').forEach((el) => { el.oninput = preview; el.onchange = preview; });
+    };
+    const buildSchedule = () => {
+      const pr = body.querySelector('#cr-preset').value;
+      const tm = () => { const [h, mi] = (body.querySelector('#cr-time').value || '9:00').split(':'); return { h: +h, mi: +mi }; };
+      if (pr === 'daily') { const { h, mi } = tm(); return { type: 'cron', expr: `${mi} ${h} * * *` }; }
+      if (pr === 'weekly') { const { h, mi } = tm(); return { type: 'cron', expr: `${mi} ${h} * * ${body.querySelector('#cr-dow').value}` }; }
+      if (pr === 'hourly') return { type: 'cron', expr: `${+body.querySelector('#cr-min').value || 0} * * * *` };
+      if (pr === 'every') return { type: 'every', minutes: Math.max(1, (+body.querySelector('#cr-n').value || 1) * (+body.querySelector('#cr-unit').value || 1)) };
+      if (pr === 'once') return { type: 'at', time: body.querySelector('#cr-at').value };
+      return { type: 'cron', expr: body.querySelector('#cr-expr').value };
+    };
+    let pvTimer = null;
+    const preview = () => {
+      clearTimeout(pvTimer);
+      pvTimer = setTimeout(async () => {
+        const el = body.querySelector('#cr-preview'); if (!el) return;
+        const r = await apiPost('/api/cron/preview', { schedule: buildSchedule() }).catch(() => null);
+        if (!r || !r.ok) { el.innerHTML = `<i class="bad-t">${escapeHtml((r && r.error) || '时间规则无法解析')}</i>`; return; }
+        // 分隔用「 · 」：i18n 的 EN 模式按 · 拆段逐段翻，每个时间片段都能命中规则
+        el.textContent = r.times.length ? '将执行于：' + r.times.map((x) => this.fmtAbs(x)).join(' · ') + (r.times.length > 1 ? ' · …' : '') : '不会再执行';
+      }, 250);
+    };
+    body.querySelector('#cr-preset').onchange = () => { renderFields(body.querySelector('#cr-preset').value); preview(); };
+    body.querySelector('#cr-agent').onchange = () => { body.querySelector('#cr-full-wrap').style.display = body.querySelector('#cr-agent').value === 'shell' ? 'none' : ''; };
+    body.querySelector('#cr-agent').onchange();
+    body.querySelector('#cr-cancel').onclick = () => { this.editing = null; this.render(); };
+    body.querySelector('#cr-save').onclick = async () => {
+      const payload = {
+        id: t.id, name: body.querySelector('#cr-name').value, cwd: body.querySelector('#cr-cwd').value,
+        agent: body.querySelector('#cr-agent').value, prompt: body.querySelector('#cr-prompt').value,
+        full: body.querySelector('#cr-full').checked, schedule: buildSchedule(),
+        enabled: t.enabled !== false,
+      };
+      const r = await apiPost('/api/cron/save', payload);
+      if (!r.ok) { toast(r.error || '保存失败', true); return; }
+      this.editing = null;
+      toast('已保存');
+      this.reload();
+    };
+    renderFields(preset);
+    preview();
+  },
+};
+
 async function init() {
   // 桌面 app：标记 body，给顶部交通灯留位、顶部可拖拽
   if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) {
@@ -4643,11 +4884,21 @@ async function init() {
   await loadFavorites();
   powerBar.init();
   verInfo.init();
+  cronPanel.syncBadge();
   loadAgentProjects();
   setInterval(loadAgentProjects, 120000); // agent 项目入口保持新鲜（服务端有 60s 缓存，开销很小）
-  await navigate(state.home, false);
-  // 恢复上次终端开合状态（dock 方位已由 applyDock 自带记忆）
-  if (localStorage.getItem('fb_term_open') === '1' && term.available()) term.open();
+  // 回到上次浏览的目录（目录已不存在则退回主目录）
+  const lastDir = localStorage.getItem('fb_last_cwd');
+  await navigate(lastDir || state.home, false);
+  if (!state.cwd) await navigate(state.home, false);
+  // 恢复上次终端开合与标签布局（几个标签、各在哪个目录、谁在前台；进程不复活）。
+  // 首次安装没有任何记录 → 默认打开：侧栏 + 文件区 + 终端的三栏就是 FanBox 的本来形态
+  if (term.available() && localStorage.getItem('fb_term_open') !== '0') {
+    let saved = null;
+    try { saved = JSON.parse(localStorage.getItem('fb_term_tabs') || 'null'); } catch { /* */ }
+    if (saved && Array.isArray(saved.tabs) && saved.tabs.length) await term.restore(saved);
+    else term.open();
+  }
   maybeShowGuide();
   bindUpdateNotice();
 }

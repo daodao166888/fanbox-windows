@@ -61,8 +61,9 @@
   };
   window.t = tr;
 
-  // 用户内容区不翻译：文件预览正文、三种编辑器、终端、灯箱、回合存档标签（含终端标题）
-  const SKIP = '#preview-body, #ed-host, .xterm, .milkdown, .lightbox, .cp-name, .cp-dir, .snap-lb';
+  // 用户内容区不翻译：文件预览正文、三种编辑器、终端、灯箱、回合存档标签（含终端标题）、
+  // 版本历史正文（CHANGELOG 是中文内容不是界面，逐段硬翻只会翻坏）
+  const SKIP = '#preview-body, #ed-host, .xterm, .milkdown, .lightbox, .cp-name, .cp-dir, .snap-lb, .clog-md, .tip-md';
   const ATTRS = ['title', 'placeholder'];
   const visit = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {

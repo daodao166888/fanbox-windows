@@ -2408,6 +2408,174 @@ function originAllowed(req) {
   try { return ALLOWED_HOSTS.has(new URL(o).hostname); } catch { return false; }
 }
 
+// ---------- 定时任务：cron.json 持久化 + 到点开终端窗口跑 agent/命令 ----------
+// 设计：调度器只在 FanBox 跑着时活着（本地工具，不装 launchd 常驻）；app 没开时错过的
+// 记一条「错过」绝不补跑——定时任务突然袭击比漏跑一次更吓人。执行复用 Agent 控制接口的
+// 开窗能力（global.__fanboxAgent.create），用户在界面上能看到窗口在干活。
+const CRON_FILE = path.join(CONFIG_DIR, 'cron.json');
+function cronLoad() {
+  try { const d = JSON.parse(fs.readFileSync(CRON_FILE, 'utf8')); return Array.isArray(d.tasks) ? d.tasks : []; }
+  catch { return []; }
+}
+function cronPersist() {
+  try { fs.mkdirSync(CONFIG_DIR, { recursive: true }); fs.writeFileSync(CRON_FILE, JSON.stringify({ tasks: cronTasks }, null, 2)); }
+  catch { /* 写失败不致命 */ }
+}
+let cronTasks = cronLoad();
+
+// 5 字段 cron（分 时 日 月 周，本地时区）。支持 * , - */n；周日 0 或 7 都认
+function cronField(spec, min, max) {
+  if (spec === '*') return null; // null = 不限
+  const set = new Set();
+  for (const part of spec.split(',')) {
+    const m = part.match(/^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/);
+    if (!m) return undefined; // 解析失败
+    const step = m[3] ? parseInt(m[3], 10) : 1;
+    if (!step) return undefined;
+    let lo, hi;
+    if (m[1] === '*') { lo = min; hi = max; }
+    else { lo = parseInt(m[1], 10); hi = m[2] ? parseInt(m[2], 10) : (m[3] ? max : lo); }
+    if (lo < min || hi > max + (max === 6 ? 1 : 0) || lo > hi) return undefined; // 周允许 7
+    for (let v = lo; v <= hi; v += step) set.add(max === 6 && v === 7 ? 0 : v);
+  }
+  return set;
+}
+// 下一次命中时刻（ms）；表达式非法返回 undefined，一年内无命中返回 null
+function cronNext(expr, fromMs) {
+  const parts = String(expr || '').trim().split(/\s+/);
+  if (parts.length !== 5) return undefined;
+  const [fMin, fHour, fDom, fMon, fDow] = [
+    cronField(parts[0], 0, 59), cronField(parts[1], 0, 23), cronField(parts[2], 1, 31),
+    cronField(parts[3], 1, 12), cronField(parts[4], 0, 6),
+  ];
+  if ([fMin, fHour, fDom, fMon, fDow].some((f) => f === undefined)) return undefined;
+  // 经典 cron 语义：日、周都有限定时，任一命中即可
+  const dayOk = (d) => {
+    const dom = !fDom || fDom.has(d.getDate());
+    const dow = !fDow || fDow.has(d.getDay());
+    return fDom && fDow ? (dom || dow) : (dom && dow);
+  };
+  const d = new Date(fromMs);
+  d.setSeconds(0, 0);
+  d.setMinutes(d.getMinutes() + 1);
+  for (let i = 0; i < 366 * 24 * 60; i++) {
+    if (!fMon || fMon.has(d.getMonth() + 1)) {
+      if (dayOk(d)) {
+        if ((!fHour || fHour.has(d.getHours())) && (!fMin || fMin.has(d.getMinutes()))) return d.getTime();
+      } else { d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 1); i += 1439; continue; } // 整天不匹配就跳天
+    } else { d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + 1); i += 1439; continue; }
+    d.setMinutes(d.getMinutes() + 1);
+  }
+  return null;
+}
+// 任务的下一次执行时刻；null = 不再执行
+function cronNextRun(t, fromMs = Date.now()) {
+  const s = t.schedule || {};
+  if (s.type === 'at') { const ts = new Date(s.time).getTime(); return !isFinite(ts) || ts <= fromMs ? null : ts; }
+  if (s.type === 'every') {
+    const step = Math.max(1, Number(s.minutes) || 0) * 60000;
+    const base = t.lastFire || t.createdAt || fromMs;
+    const n = base + step;
+    return n > fromMs ? n : fromMs + step; // 错过的不补，从现在起重新按周期排
+  }
+  if (s.type === 'cron') { const n = cronNext(s.expr, fromMs); return n === undefined ? null : n; }
+  return null;
+}
+function cronScheduleValid(s) {
+  if (!s || typeof s !== 'object') return '缺少时间规则';
+  if (s.type === 'at') { const ts = new Date(s.time).getTime(); if (!isFinite(ts)) return '时间点无法解析'; if (ts <= Date.now()) return '时间点已经过去了'; return null; }
+  if (s.type === 'every') { const m = Number(s.minutes); if (!isFinite(m) || m < 1) return '周期至少 1 分钟'; return null; }
+  if (s.type === 'cron') { return cronNext(s.expr, Date.now()) === undefined ? 'cron 表达式无法解析（需要 5 段：分 时 日 月 周）' : null; }
+  return '不认识的时间规则类型';
+}
+function cronShq(s) { return `'${String(s).replace(/'/g, `'\\''`)}'`; }
+// 到点敲进新终端的命令。agent 任务默认 acceptEdits（编辑自动同意，跑命令仍确认）；
+// full = 用户明确要全自动（无人值守跳过一切确认）
+function cronCommand(t) {
+  if (t.agent === 'shell') return String(t.prompt || '');
+  const p = cronShq(t.prompt || '');
+  if (t.agent === 'codex') return t.full ? `codex --full-auto ${p}` : `codex ${p}`;
+  return t.full ? `claude --dangerously-skip-permissions ${p}` : `claude --permission-mode acceptEdits ${p}`;
+}
+async function cronFire(t, manual) {
+  t.nextRun = (t.schedule || {}).type === 'at' ? null : cronNextRun(t); // 先排下一次，防调度重入
+  const rec = { t: Date.now(), manual: !!manual };
+  const A = global.__fanboxAgent;
+  if (!A) { rec.ok = false; rec.error = '需要桌面版（浏览器版没有内嵌终端）'; }
+  else {
+    const r = await A.create({ cwd: t.cwd || HOME, autorun: cronCommand(t) }).catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+    rec.ok = !!(r && r.ok); if (r && r.error) rec.error = r.error; if (r && r.id) rec.term = r.id;
+  }
+  t.lastFire = rec.t;
+  t.history = [rec, ...(t.history || [])].slice(0, 10);
+  if ((t.schedule || {}).type === 'at') t.enabled = false; // 一次性任务执行完自动归档
+  cronPersist();
+  return rec;
+}
+// 启动结算：错过的记一笔、不补跑；一次性过期的直接停
+for (const t of cronTasks) {
+  if (t.enabled && t.nextRun && t.nextRun < Date.now() - 60000) {
+    t.history = [{ t: t.nextRun, missed: true }, ...(t.history || [])].slice(0, 10);
+  }
+  t.nextRun = t.enabled ? cronNextRun(t) : null;
+  if (t.enabled && (t.schedule || {}).type === 'at' && !t.nextRun) t.enabled = false;
+}
+cronPersist();
+setInterval(() => {
+  const now = Date.now();
+  for (const t of cronTasks) {
+    if (t.enabled && t.nextRun && t.nextRun <= now) cronFire(t, false);
+  }
+}, 20000);
+
+function cronList() { return { ok: true, desktop: !!global.__fanboxAgent, now: Date.now(), tasks: cronTasks }; }
+async function cronAction(action, b = {}) {
+  if (action === 'preview') { // 给定时间规则，预告接下来最多 3 次执行
+    const err = cronScheduleValid(b.schedule);
+    if (err) return { ok: false, error: err };
+    const times = [];
+    let from = Date.now();
+    const fake = { schedule: b.schedule, createdAt: Date.now() };
+    for (let i = 0; i < 3; i++) {
+      const n = cronNextRun(fake, from);
+      if (!n) break;
+      times.push(n); from = n; fake.lastFire = n;
+    }
+    return { ok: true, times };
+  }
+  if (action === 'save') {
+    const err = cronScheduleValid(b.schedule);
+    if (err) return { ok: false, error: err };
+    if (!String(b.prompt || '').trim()) return { ok: false, error: '任务内容不能为空' };
+    const agent = ['claude', 'codex', 'shell'].includes(b.agent) ? b.agent : 'claude';
+    const old = b.id && cronTasks.find((x) => x.id === b.id);
+    const t = old || { id: 'cr' + crypto.randomBytes(4).toString('hex'), createdAt: Date.now(), history: [] };
+    Object.assign(t, {
+      name: String(b.name || '').trim() || String(b.prompt).trim().slice(0, 24),
+      cwd: String(b.cwd || '').trim() || HOME,
+      agent, prompt: String(b.prompt).trim(), full: !!b.full,
+      schedule: b.schedule, enabled: b.enabled !== false,
+      createdBy: b.createdBy === 'agent' ? 'agent' : (old ? old.createdBy : 'ui'),
+    });
+    t.nextRun = t.enabled ? cronNextRun(t) : null;
+    if (!old) cronTasks.push(t);
+    cronPersist();
+    return { ok: true, task: t };
+  }
+  const t = cronTasks.find((x) => x.id === b.id);
+  if (!t) return { ok: false, error: 'no such task' };
+  if (action === 'delete') { cronTasks = cronTasks.filter((x) => x.id !== b.id); cronPersist(); return { ok: true }; }
+  if (action === 'toggle') {
+    t.enabled = !!b.enabled;
+    t.nextRun = t.enabled ? cronNextRun(t) : null;
+    if (t.enabled && (t.schedule || {}).type === 'at' && !t.nextRun) { t.enabled = false; cronPersist(); return { ok: false, error: '时间点已过去，改个时间再启用' }; }
+    cronPersist();
+    return { ok: true, task: t };
+  }
+  if (action === 'run') { const rec = await cronFire(t, true); return { ok: !!rec.ok, error: rec.error, term: rec.term, task: t }; }
+  return { ok: false, error: 'unknown cron action' };
+}
+
 // ---------- 版本历史：解析随包分发的 CHANGELOG.md（Keep a Changelog 格式），侧栏版本号入口用 ----------
 let clogCache = null; // { mtime, data }
 function changelogData() {
@@ -2445,6 +2613,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/changelog') {
       return sendJSON(res, 200, changelogData());
+    }
+    // 定时任务（界面用；agent 用带 token 的 /api/agent/cron*，同一套实现）
+    if (p === '/api/cron') {
+      return sendJSON(res, 200, cronList());
+    }
+    if (p.startsWith('/api/cron/') && req.method === 'POST') {
+      return sendJSON(res, 200, await cronAction(p.slice('/api/cron/'.length), await readBody(req)));
     }
     if (p === '/api/list') {
       return sendJSON(res, 200, await listDir(qp.get('path') || HOME));
@@ -2699,6 +2874,13 @@ const server = http.createServer(async (req, res) => {
       if (!A) return sendJSON(res, 501, { ok: false, error: 'desktop app only' });
       const tok = req.headers['x-fanbox-token'] || qp.get('token') || '';
       if (tok !== A.token) return sendJSON(res, 403, { ok: false, error: 'bad token' });
+      // 定时任务：agent 用自然语言理解用户意图后换算成 schedule 调这里（见 skills/fanbox-agent）
+      if (p === '/api/agent/cron') return sendJSON(res, 200, cronList());
+      if (p.startsWith('/api/agent/cron/') && req.method === 'POST') {
+        const b = await readBody(req);
+        if (p === '/api/agent/cron/save') b.createdBy = 'agent';
+        return sendJSON(res, 200, await cronAction(p.slice('/api/agent/cron/'.length), b));
+      }
       if (p === '/api/agent/terminals') return sendJSON(res, 200, await A.list());
       if (p === '/api/agent/read') return sendJSON(res, 200, A.read(qp.get('id'), parseInt(qp.get('lines') || '0', 10)));
       if (p === '/api/agent/send' && req.method === 'POST') { const b = await readBody(req); return sendJSON(res, 200, A.send(b.id, b.text, b)); }
