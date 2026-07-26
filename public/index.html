@@ -15,7 +15,7 @@
       <div class="brand">
         <span class="logo"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor" fill-opacity="0.13" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg></span>
         <div>
-          <div class="brand-name">FanBox</div>
+          <div class="brand-name">FanBox <a id="ver-tag" class="brand-ver hidden"></a></div>
           <div class="brand-sub">Coding Agent的驾驶舱</div>
         </div>
       </div>
@@ -50,6 +50,12 @@
           Agent 用量 <span id="usage-arrow">▸</span>
         </div>
         <div id="usage-body" class="hidden"></div>
+      </div>
+      <!-- 离开电脑：两个电源开关（macOS 桌面版才显示，app.js 里按 fanboxPower 判定） -->
+      <div id="power-sec" class="hidden">
+        <div class="nav-title"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg> 离开电脑</div>
+        <div class="pw-row" id="pw-lid"><span class="pw-dot"></span><span class="pw-label">合盖继续干活</span><label class="pw-switch"><i></i></label></div>
+        <div class="pw-row" id="pw-wechat"><span class="pw-dot"></span><span class="pw-label">微信遥控不断线</span><label class="pw-switch"><i></i></label></div>
       </div>
       <div class="theme-switch" id="theme-switch">
         <div class="theme-switch-label">皮肤</div>

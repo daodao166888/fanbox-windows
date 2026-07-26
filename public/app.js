@@ -2164,6 +2164,257 @@ function bindTerminalResizer() {
   });
 }
 
+// ---------- 微信 ClawBot：终端内的 IM 界面（设计方向 A）。桌面输入直连本机 claude/codex，可选连手机微信遥控 ----------
+const wechatView = {
+  offMsg: null, offQr: null, offConn: null, offExpired: null, onKey: null, onDoc: null,
+  target: 'codex', targets: [], connected: false, cwdName: '', menuOpen: false,
+  connState: 'unknown',
+  el() { return $('#wechat-view'); },
+  shown() { const e = this.el(); return e && !e.classList.contains('hidden'); },
+  toggle() { this.shown() ? this.close() : this.open(); },
+  async open() {
+    if (!window.fanboxWechat) { toast('微信连接需在 FanBox 桌面版使用', true); return; }
+    if (!term.available()) { toast('需要桌面版的内嵌终端', true); return; }
+    if ($('#terminal-panel').classList.contains('hidden')) term.open(); // 这界面活在终端里
+    try { window.fanboxWechat.setCwd(state.cwd); } catch { /* */ }
+    this.renderShell();
+    this.el().classList.remove('hidden');
+    this.onKey = (ev) => {
+      if (ev.key !== 'Escape' || !this.shown()) return;
+      if (this.menuOpen) { ev.preventDefault(); this.closeMenu(); return; }
+      const scan = this.el().querySelector('#wx-scan');
+      if (scan && !scan.classList.contains('hidden')) { ev.preventDefault(); this.teardownScan(); scan.classList.add('hidden'); return; }
+      ev.preventDefault(); this.close();
+    };
+    document.addEventListener('keydown', this.onKey, true);
+    this.offMsg = window.fanboxWechat.onMessage(() => this.loadChat());
+    // 连接失效（轮询/探活发现 token 掉了）→ 立刻翻红 + 弹重连横幅，不让用户对着死连接干瞪眼
+    this.offExpired = window.fanboxWechat.onExpired ? window.fanboxWechat.onExpired(() => this.setConn('expired')) : null;
+    await this.detect();
+  },
+  close() {
+    this.teardown();
+    if (this.onKey) { document.removeEventListener('keydown', this.onKey, true); this.onKey = null; }
+    if (this.onDoc) { document.removeEventListener('click', this.onDoc, true); this.onDoc = null; }
+    const e = this.el(); if (e) { e.classList.add('hidden'); e.innerHTML = ''; }
+  },
+  teardown() {
+    if (this.offMsg) { this.offMsg(); this.offMsg = null; }
+    if (this.offExpired) { this.offExpired(); this.offExpired = null; }
+    this.teardownScan();
+    this.menuOpen = false;
+  },
+  teardownScan() {
+    if (this.offQr) { this.offQr(); this.offQr = null; }
+    if (this.offConn) { this.offConn(); this.offConn = null; }
+    try { window.fanboxWechat && window.fanboxWechat.cancel(); } catch { /* */ }
+  },
+  renderShell() {
+    const e = this.el();
+    e.innerHTML = `<div class="wx-bar">
+        <span class="wx-dot off" id="wx-dot"></span>
+        <span class="wx-name">微信 ClawBot</span>
+        <span class="wx-status" id="wx-status"></span>
+        <span class="wx-spacer"></span>
+        <span class="wx-brain" id="wx-brain">连到 Codex <span class="caret">▾</span></span>
+        <button class="wx-x" id="wx-close" title="收起（回到终端）">✕</button>
+        <div class="wx-menu hidden" id="wx-menu"></div>
+      </div>
+      <div class="wx-body">
+        <div class="wx-reconnect hidden" id="wx-reconnect">
+          <span class="wx-reconnect-msg" id="wx-reconnect-msg"></span>
+          <span class="wx-spacer"></span>
+          <button class="wx-reconnect-btn" id="wx-reconnect-btn">重新连接</button>
+        </div>
+        <div class="wx-ctx" id="wx-ctx">
+          <div class="wx-meter" id="wx-meter" title="当前对话上下文用量：越满越贵越慢，满了会自动整理"><span class="wx-meter-fill" id="wx-meter-fill"></span></div>
+          <span class="wx-meter-txt" id="wx-meter-txt"></span>
+          <span class="wx-spacer"></span>
+          <button class="wx-ctx-btn" id="wx-compact" title="整理对话：把要点存进记忆，换个轻量上下文接着聊">整理</button>
+          <button class="wx-ctx-btn" id="wx-new" title="新对话：归档当前，开个全新的（靠长期记忆续）">新对话</button>
+        </div>
+        <div class="wx-chat" id="wx-chat"></div>
+        <div class="wx-scan hidden" id="wx-scan"></div>
+        <div class="wx-viewonly">仅查看手机微信与本机大脑的对话记录，回复请在手机微信进行</div>
+      </div>`;
+    e.querySelector('#wx-close').onclick = () => this.close();
+    e.querySelector('#wx-brain').onclick = (ev) => { ev.stopPropagation(); this.toggleMenu(); };
+    e.querySelector('#wx-compact').onclick = (ev) => this.runCtxAction(ev.currentTarget, '整理中…', () => window.fanboxWechat.compact(), '已整理上下文');
+    e.querySelector('#wx-new').onclick = (ev) => this.runCtxAction(ev.currentTarget, '处理中…', () => window.fanboxWechat.newConversation(), '已开启新对话');
+    e.querySelector('#wx-reconnect-btn').onclick = () => this.connectPhone();
+    this.onDoc = (ev) => { if (this.menuOpen && !ev.target.closest('#wx-menu') && !ev.target.closest('#wx-brain')) this.closeMenu(); };
+    document.addEventListener('click', this.onDoc, true);
+  },
+  async detect() {
+    this.setConn('checking'); // 打开就给「检测中」即时反馈，别让用户盯着一个不知真假的绿点
+    const env = await window.fanboxWechat.env().catch(() => ({}));
+    this.targets = (env.targets && env.targets.length) ? env.targets : [{ id: 'codex', label: 'Codex', available: true }, { id: 'claude', label: 'Claude Code', available: true }];
+    if (env.target) this.target = env.target;
+    this.cwdName = env.cwdName || '';
+    this.persona = env.persona || '';
+    this.personaDefault = env.personaDefault || '';
+    this.syncBar();
+    await this.loadChat();
+    // 主动探活，拿到权威状态（connected / expired / unreachable / disconnected）
+    const r = window.fanboxWechat.check ? await window.fanboxWechat.check().catch(() => ({})) : {};
+    this.setConn(r.state || (env.connected ? 'connected' : 'disconnected'));
+  },
+  label(id) { const t = this.targets.find((x) => x.id === id); return t ? t.label : (id === 'claude' ? 'Claude Code' : 'Codex'); },
+  // 连接状态机：连接监测的唯一出口，统一刷点/状态文案/重连横幅/顶栏绿点
+  setConn(state) { this.connState = state; this.connected = (state === 'connected'); this.applyConn(); },
+  applyConn() {
+    const e = this.el(); if (!e) return;
+    const map = {
+      checking: { cls: 'checking', text: '检测连接中…' },
+      connected: { cls: '', text: '已连接' },
+      expired: { cls: 'bad', text: '连接已失效' },
+      unreachable: { cls: 'bad', text: '连接异常' },
+      disconnected: { cls: 'off', text: '未连接' },
+      unknown: { cls: 'off', text: '' },
+    };
+    const m = map[this.connState] || map.unknown;
+    const dot = e.querySelector('#wx-dot'); if (dot) dot.className = ('wx-dot ' + m.cls).trim();
+    const status = e.querySelector('#wx-status'); if (status) status.textContent = m.text;
+    // 失效 / 未连 → 醒目重连横幅（直接弹二维码）；检测中 / 已连 / 临时异常不打扰
+    const rc = e.querySelector('#wx-reconnect');
+    if (rc) {
+      const show = this.connState === 'expired' || this.connState === 'disconnected';
+      rc.classList.toggle('hidden', !show);
+      if (show) {
+        const msg = rc.querySelector('#wx-reconnect-msg'); const btn = rc.querySelector('#wx-reconnect-btn');
+        if (msg) msg.textContent = this.connState === 'expired' ? '微信连接已失效，需要重新扫码' : '还没连接手机微信';
+        if (btn) btn.textContent = this.connState === 'expired' ? '重新连接' : '连接手机微信';
+      }
+    }
+    this.syncDot(this.connState === 'connected');
+  },
+  syncBar() {
+    const e = this.el(); if (!e) return;
+    const brain = e.querySelector('#wx-brain'); if (brain) brain.innerHTML = `连到 ${escapeHtml(this.label(this.target))} <span class="caret">${this.menuOpen ? '▴' : '▾'}</span>`;
+    this.applyConn();
+  },
+  toggleMenu() { this.menuOpen ? this.closeMenu() : this.openMenu(); },
+  openMenu() {
+    this.menuOpen = true;
+    const e = this.el(); const menu = e.querySelector('#wx-menu');
+    const item = (id) => {
+      const t = this.targets.find((x) => x.id === id) || { available: true };
+      const cur = id === this.target;
+      return `<div class="wx-mi ${cur ? 'cur' : ''}" data-pick="${id}"${t.available ? '' : ' disabled'}>${escapeHtml(this.label(id))}${cur ? '<span class="ck">✓</span>' : ''}</div>`;
+    };
+    menu.innerHTML = item('claude') + item('codex') + `<div class="wx-sep"></div>` +
+      `<div class="wx-mi" data-act="persona">自定义人格…</div>` +
+      (this.connected ? `<div class="wx-mi danger" data-act="disc">断开手机微信</div>` : `<div class="wx-mi" data-act="conn">连接手机微信…</div>`);
+    menu.querySelectorAll('[data-pick]').forEach((b) => { b.onclick = () => this.pickTarget(b.dataset.pick); });
+    const conn = menu.querySelector('[data-act=conn]'); if (conn) conn.onclick = () => { this.closeMenu(); this.connectPhone(); };
+    const disc = menu.querySelector('[data-act=disc]'); if (disc) disc.onclick = () => { this.closeMenu(); this.disconnectPhone(); };
+    const pers = menu.querySelector('[data-act=persona]'); if (pers) pers.onclick = () => { this.closeMenu(); this.editPersona(); };
+    menu.classList.remove('hidden');
+    e.querySelector('#wx-brain').classList.add('open');
+    this.syncBar();
+  },
+  closeMenu() {
+    this.menuOpen = false; const e = this.el(); if (!e) return;
+    const m = e.querySelector('#wx-menu'); if (m) m.classList.add('hidden');
+    const b = e.querySelector('#wx-brain'); if (b) b.classList.remove('open');
+    this.syncBar();
+  },
+  async pickTarget(id) {
+    const t = this.targets.find((x) => x.id === id);
+    if (t && !t.available) { toast(`本机未检测到 ${this.label(id)}`, true); return; }
+    this.target = id; this.closeMenu();
+    await window.fanboxWechat.setTarget(id).catch(() => {});
+    this.syncBar(); this.loadChat();
+  },
+  async loadChat() {
+    const e = this.el(); const chat = e && e.querySelector('#wx-chat'); if (!chat) return;
+    const r = await window.fanboxWechat.conversation().catch(() => ({ messages: [] }));
+    const msgs = r.messages || [];
+    this.updateMeter(r.tokens, r.budget);
+    if (!msgs.length) {
+      chat.innerHTML = `<div class="wx-empty">还没有对话。<br>点右上「连到 ${escapeHtml(this.label(this.target))} ▾ → 连接手机微信」，<br>用手机微信遥控本机的 <b>${escapeHtml(this.label(this.target))}</b>，对话记录会显示在这里。</div>`;
+      return;
+    }
+    chat.innerHTML = msgs.map((m) => this.bubble(m)).join('');
+    chat.scrollTop = chat.scrollHeight;
+  },
+  // 上下文用量进度条：满了越贵越慢，≥80% 转红提醒（会自动整理）
+  updateMeter(tokens, budget) {
+    const e = this.el(); if (!e) return;
+    tokens = tokens || 0; budget = budget || 120000;
+    const pct = Math.min(100, Math.round((tokens / budget) * 100));
+    const fill = e.querySelector('#wx-meter-fill'); const txt = e.querySelector('#wx-meter-txt');
+    if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('hot', pct >= 80); }
+    if (txt) txt.textContent = tokens ? `${Math.round(tokens / 1000)}k / ${Math.round(budget / 1000)}k` : '';
+  },
+  // 整理/新对话共用：禁用按钮 + 改文案跑（flush 要一次模型调用，几秒），完事 toast + 刷新
+  async runCtxAction(btn, busyText, fn, okText) {
+    if (btn.disabled) return;
+    const old = btn.textContent; btn.disabled = true; btn.textContent = busyText;
+    try { await fn(); toast(okText); } catch { toast('操作失败', true); }
+    btn.disabled = false; btn.textContent = old; this.loadChat();
+  },
+  bubble(m) {
+    if (m.role === 'system') return `<div class="wx-sys">${escapeHtml(m.text)}</div>`; // 分隔线/系统提示居中
+    const me = m.role === 'user';
+    const av = me ? '花' : (this.target === 'claude' ? 'C' : 'CX');
+    // bot 回复渲染 markdown（手机大脑常回 **加粗**/列表/`代码`）；user 保持纯文本转义
+    const text = me ? escapeHtml(m.text) : this.mdBody(m.text);
+    // 用户发来的图片：用 /api/raw 直接读本机收件箱里的原图，点击走全局 lightbox 放大
+    const imgs = (m.images || []).map((p) =>
+      `<img class="wx-img" src="/api/raw?path=${encodeURIComponent(p)}" loading="lazy" alt="图片" onclick="lightbox(this.dataset.path)" data-path="${escapeHtml(p)}">`
+    ).join('');
+    const body = imgs ? imgs + (m.text ? `<div class="wx-cap">${text}</div>` : '') : text;
+    return `<div class="wx-row ${me ? 'me' : 'bot'}"><div class="wx-av ${me ? 'me' : 'bot'}">${av}</div><div class="wx-bub${me ? '' : ' md'}">${body}</div></div>`;
+  },
+  mdBody(text) {
+    try { if (window.marked && !window.__noMarked) return window.marked.parse(String(text || ''), { breaks: true, gfm: true }); } catch { /* 退回纯文本 */ }
+    return escapeHtml(text).replace(/\n/g, '<br>');
+  },
+  connectPhone() {
+    const e = this.el(); const scan = e.querySelector('#wx-scan');
+    scan.innerHTML = `<div class="wx-qr" id="wx-qr"><div class="wx-loading">生成二维码…</div></div>
+      <div class="wx-scan-lead">用手机微信扫一扫</div>
+      <div class="wx-scan-sub">连上后，微信就能遥控本机的 ${escapeHtml(this.label(this.target))} —— 看代码、跑测试、改 bug，回手机上一句话就行。</div>
+      <div class="wx-scan-close" id="wx-scan-close">取消</div>`;
+    scan.classList.remove('hidden');
+    e.querySelector('#wx-scan-close').onclick = () => { this.teardownScan(); scan.classList.add('hidden'); };
+    this.offQr = window.fanboxWechat.onQr((m) => {
+      const qr = this.el() && this.el().querySelector('#wx-qr'); if (!qr) return;
+      if (m.expired) { qr.innerHTML = `<div class="wx-loading">二维码过期，请重试</div>`; return; }
+      qr.innerHTML = m.dataUrl ? `<img src="${m.dataUrl}" alt="二维码">` : `<div class="wx-loading">${escapeHtml(m.content || '二维码生成失败')}</div>`;
+    });
+    this.offConn = window.fanboxWechat.onConnected(async () => { this.teardownScan(); scan.classList.add('hidden'); this.setConn('connected'); await this.detect(); toast('微信已连接'); });
+    window.fanboxWechat.login().then((r) => { if (r && !r.ok) { const qr = this.el() && this.el().querySelector('#wx-qr'); if (qr) qr.innerHTML = `<div class="wx-loading">${escapeHtml(r.error || '登录失败')}</div>`; } });
+  },
+  // 自定义微信 bot 人格：复用 scan 覆盖层做一个编辑面板
+  editPersona() {
+    const e = this.el(); const scan = e.querySelector('#wx-scan');
+    scan.innerHTML = `<div class="wx-persona">
+        <div class="wx-persona-title">微信 bot 人格</div>
+        <div class="wx-persona-sub">这段会作为行为指令注入。手机上回复啰嗦时，让它更简洁。</div>
+        <textarea class="wx-persona-ta" id="wx-persona-ta" rows="6" placeholder="例如：用中文、简洁、适合手机看…">${escapeHtml(this.persona || '')}</textarea>
+        <div class="wx-persona-btns">
+          <span class="wx-scan-close" id="wx-persona-reset">恢复默认</span>
+          <span class="wx-spacer"></span>
+          <span class="wx-scan-close" id="wx-persona-cancel">取消</span>
+          <button class="wx-send" id="wx-persona-save">保存</button>
+        </div>
+      </div>`;
+    scan.classList.remove('hidden');
+    const ta = scan.querySelector('#wx-persona-ta');
+    scan.querySelector('#wx-persona-reset').onclick = () => { ta.value = this.personaDefault || ''; };
+    scan.querySelector('#wx-persona-cancel').onclick = () => { scan.classList.add('hidden'); };
+    scan.querySelector('#wx-persona-save').onclick = async () => {
+      const r = await window.fanboxWechat.setPersona(ta.value).catch(() => ({}));
+      this.persona = (r && r.persona) || ta.value;
+      scan.classList.add('hidden'); toast('人格已更新');
+    };
+  },
+  async disconnectPhone() { await window.fanboxWechat.disconnect().catch(() => {}); this.setConn('disconnected'); toast('已断开手机微信'); },
+  syncDot(on) { const d = $('#wechat-dot'); if (d) d.classList.toggle('hidden', !on); const btn = $('#term-wechat'); if (btn) btn.classList.toggle('on', on); },
+};
+
 // ---------- coding agent 启动按钮（#38：内置注册表 + 设置面板开关 + config 自定义） ----------
 // 三层：① AGENT_REGISTRY 内置 11 个主流 agent（图标在 /assets/agents/）
 //      ② 设置面板（⚙ 滑杆按钮）勾选启用哪些，存 config.json 的 enabledAgents，默认 claude + codex
@@ -4206,6 +4457,152 @@ if (window.fanboxFs) {
 }
 
 // ---------- 启动 ----------
+// ---------- 侧栏悬停解释卡：比原生 title 更快出现、能排版，鼠标移开即散 ----------
+function sideHoverCard(el, build) {
+  let card = null;
+  const hide = () => { if (card) { card.remove(); card = null; } };
+  el.addEventListener('mouseenter', () => {
+    hide();
+    card = document.createElement('div');
+    card.className = 'side-tip';
+    card.innerHTML = build();
+    document.body.appendChild(card);
+    const r = el.getBoundingClientRect();
+    let left = r.right + 10;
+    if (left + card.offsetWidth > window.innerWidth - 8) left = Math.max(8, window.innerWidth - card.offsetWidth - 8);
+    card.style.left = left + 'px';
+    card.style.top = Math.max(8, Math.min(r.top, window.innerHeight - card.offsetHeight - 8)) + 'px';
+  });
+  el.addEventListener('mouseleave', hide);
+  el.addEventListener('click', hide);
+  window.addEventListener('blur', hide);
+}
+
+// ---------- 侧栏「离开电脑」：合盖继续干活 / 微信遥控不断线（macOS 桌面版专属）----------
+const powerBar = {
+  st: null,
+  async init() {
+    if (!window.fanboxPower) return; // 浏览器版 / 老 preload：整段不显示
+    const st = await window.fanboxPower.state().catch(() => null);
+    if (!st || st.platform !== 'darwin') return; // 禁休眠靠 pmset，仅 macOS
+    this.st = st;
+    $('#power-sec').classList.remove('hidden');
+    $('#pw-lid').onclick = () => this.flip('lid');
+    $('#pw-wechat').onclick = () => this.flip('wechat');
+    sideHoverCard($('#pw-lid'), () => this.tipLid());
+    sideHoverCard($('#pw-wechat'), () => this.tipWechat());
+    window.fanboxPower.onChange((m) => { this.st = m; this.sync(); });
+    this.sync();
+  },
+  async flip(kind) {
+    const st = this.st || {};
+    const on = !(kind === 'lid' ? st.lid : st.wechat);
+    const r = await (kind === 'lid' ? window.fanboxPower.setLid(on) : window.fanboxPower.setWechat(on)).catch(() => null);
+    if (r) { this.st = r; this.sync(); }
+    if (r && r.ok) {
+      if (kind === 'lid') toast(r.on ? '已开启 · agent 干活时合盖不休眠' : '已关闭 · 合盖照常休眠');
+      else toast(r.on ? '已开启 · 微信连着时不休眠' : '已关闭 · 恢复正常休眠');
+    } else if (r && r.error && r.error !== 'cancelled' && r.error !== 'setup-cancelled') toast('开启失败：' + r.error, true);
+  },
+  sync() {
+    const st = this.st; if (!st) return;
+    const row = (id, on, lit) => {
+      const el = $(id); if (!el) return;
+      el.querySelector('.pw-switch').classList.toggle('on', on);
+      el.querySelector('.pw-dot').classList.toggle('lit', lit);
+    };
+    row('#pw-lid', !!st.lid, !!st.lidHolding);
+    row('#pw-wechat', !!st.wechat, !!st.wechatHolding);
+  },
+  tipLid() {
+    const st = this.st || {};
+    let now;
+    if (!st.lid) now = '现在：未开启，合盖照常休眠';
+    else if (st.lidHolding) now = `现在：${st.terms} 个终端开着，agent 正在干活 → 生效中，合盖也不休眠`;
+    else if (st.terms > 0) now = `现在：${st.terms} 个终端开着但都空闲 → 合盖照常休眠`;
+    else now = '现在：没有终端会话 → 合盖照常休眠';
+    return `<b>合盖继续干活</b>
+      <p>翻箱盯着每个终端窗口的工作状态。开启后：只要检测到有 agent 正在干活，合上盖子 Mac 也不休眠，任务接着跑；所有终端都空闲约两分钟后，自动恢复正常休眠——不会让 Mac 一直不睡。</p>
+      <p class="tip-note">合盖跑任务持续耗电发热，建议接电源。首次开启需输一次管理员密码（装一条仅限电源设置的免密规则）。</p>
+      <p class="tip-state">${escapeHtml(now)}</p>`;
+  },
+  tipWechat() {
+    const st = this.st || {};
+    let now;
+    if (!st.wechat) now = '现在：未开启，合盖照常休眠';
+    else if (st.wechatHolding) now = '现在：微信已连接 → 生效中，合盖 / 息屏也不休眠';
+    else now = '现在：微信未连接 → 暂不生效，连上后自动开始守护';
+    return `<b>微信遥控不断线</b>
+      <p>开启后，手机微信连着 ClawBot 期间，合盖 / 息屏也不休眠——人在外面也能一直用微信遥控本机的 Claude Code / Codex；微信断开自动恢复正常休眠。</p>
+      <p class="tip-note">持续耗电发热，建议接电源。首次开启需输一次管理员密码（装一条仅限电源设置的免密规则）。</p>
+      <p class="tip-state">${escapeHtml(now)}</p>`;
+  },
+};
+
+// ---------- 版本号与版本历史：brand 旁小版本标，悬停看最新更新，点击看全部 ----------
+const verInfo = {
+  data: null,
+  async init() {
+    let d = null;
+    try { d = await api('/api/changelog'); } catch { /* 服务端没这接口就不显示 */ }
+    if (!d || !d.ok) return;
+    this.data = d;
+    const el = $('#ver-tag');
+    el.textContent = 'v' + d.version;
+    el.classList.remove('hidden');
+    el.onclick = (ev) => { ev.stopPropagation(); this.showAll(); };
+    sideHoverCard(el, () => this.tipHtml());
+  },
+  // Keep a Changelog 的英文分类词换成中文再渲染，用户不用猜 Added/Fixed 是啥
+  md(body) {
+    const zh = String(body || '')
+      .replace(/^### Added$/gm, '### 新增')
+      .replace(/^### Fixed$/gm, '### 修复')
+      .replace(/^### Changed$/gm, '### 改进')
+      .replace(/^### Removed$/gm, '### 移除')
+      .replace(/^### Deprecated$/gm, '### 弃用')
+      .replace(/^### Security$/gm, '### 安全');
+    return window.marked ? window.marked.parse(zh) : '<pre>' + escapeHtml(zh) + '</pre>';
+  },
+  tipHtml() {
+    const e = (this.data.entries || []).find((x) => x.version !== 'Unreleased' && x.body);
+    if (!e) return '<b>版本历史</b><p class="tip-note">点击查看全部版本更新</p>';
+    return `<b>v${escapeHtml(e.version)} 更新了什么</b><span class="tip-date">${escapeHtml(e.date || '')}</span>
+      <div class="tip-md">${this.md(e.body)}</div>
+      <p class="tip-note">点击版本号查看完整版本历史</p>`;
+  },
+  showAll() {
+    const old = $('.clog-overlay'); if (old) old.remove();
+    const entries = (this.data.entries || []).filter((e) => e.body);
+    const cur = this.data.version;
+    const ov = document.createElement('div');
+    ov.className = 'input-overlay clog-overlay';
+    ov.innerHTML = `<div class="input-dialog clog-dialog">
+      <div class="input-title">版本历史<span class="clog-sub">最新在上</span></div>
+      <div class="clog-body">${entries.map((e) => `
+        <div class="clog-entry">
+          <div class="clog-head">
+            <span class="clog-ver">${e.version === 'Unreleased' ? '开发中 · 未发布' : 'v' + escapeHtml(e.version)}</span>
+            ${e.date ? `<span class="clog-date">${escapeHtml(e.date)}</span>` : ''}
+            ${e.version === cur ? '<span class="clog-curtag">当前版本</span>' : ''}
+          </div>
+          <div class="clog-md">${this.md(e.body)}</div>
+        </div>`).join('') || '<div class="empty-state">还没有版本记录</div>'}</div></div>`;
+    document.body.appendChild(ov);
+    const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+    const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+    ov.onclick = (ev) => { if (ev.target === ov) close(); };
+    document.addEventListener('keydown', onKey, true);
+    // 更新说明里的外链（GitHub、参考项目等）交给系统浏览器，别把 app 自己导航走
+    ov.querySelector('.clog-body').addEventListener('click', (ev) => {
+      const a = ev.target.closest('a'); if (!a) return;
+      ev.preventDefault();
+      const href = a.getAttribute('href') || '';
+      if (/^https?:/.test(href)) { window.fanboxUpdate ? window.fanboxUpdate.open(href) : window.open(href, '_blank'); }
+    });
+  },
+};
+
 async function init() {
   // 桌面 app：标记 body，给顶部交通灯留位、顶部可拖拽
   if (window.fanboxEnv && window.fanboxEnv.isDesktopApp) {
@@ -4244,6 +4641,8 @@ async function init() {
   document.querySelectorAll('#theme-switch .theme-seg button').forEach((b) => { b.onclick = () => applyTheme(b.dataset.skin); });
   await loadRoots();
   await loadFavorites();
+  powerBar.init();
+  verInfo.init();
   loadAgentProjects();
   setInterval(loadAgentProjects, 120000); // agent 项目入口保持新鲜（服务端有 60s 缓存，开销很小）
   await navigate(state.home, false);

@@ -184,6 +184,34 @@ kbd {
 .usage-trio span { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; background: var(--bg-3); border-radius: 6px; padding: 5px 2px; font-size: 10px; color: var(--text-faint); }
 .usage-trio b { font-size: 12.5px; color: var(--text); font-variant-numeric: tabular-nums; }
 
+/* ---------- 侧栏「离开电脑」：合盖继续干活 / 微信遥控不断线 ---------- */
+#power-sec { padding: 10px 0 4px; border-top: 1px solid var(--border); }
+#power-sec.hidden { display: none; }
+.pw-row { display: flex; align-items: center; gap: 7px; padding: 5px 10px; border-radius: 7px; cursor: pointer; user-select: none; }
+.pw-row:hover { background: var(--bg-3); }
+.pw-label { flex: 1; font-size: 12.5px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pw-row:hover .pw-label { color: var(--text); }
+.pw-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border); flex: 0 0 6px; }
+.pw-dot.lit { background: #07C160; box-shadow: 0 0 0 3px rgba(7, 193, 96, 0.16); }
+.pw-switch { flex: none; width: 30px; height: 17px; border: 1px solid var(--border); border-radius: 99px; background: var(--bg-3); position: relative; cursor: pointer; transition: 0.15s; }
+.pw-switch i { position: absolute; top: 2px; left: 2px; width: 11px; height: 11px; border-radius: 50%; background: var(--text-faint); transition: 0.15s; }
+.pw-switch.on { background: var(--accent); border-color: var(--accent); }
+.pw-switch.on i { left: 15px; background: var(--accent-ink); }
+
+/* 侧栏悬停解释卡：出现在侧栏右侧，pointer-events 关掉、绝不抢鼠标 */
+.side-tip { position: fixed; z-index: 60; width: 300px; max-width: calc(100vw - 24px); background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 12px 14px; pointer-events: none; font-size: 12px; line-height: 1.65; color: var(--text-dim); }
+.side-tip b { display: inline-block; font-size: 12.5px; color: var(--text); margin-bottom: 4px; }
+.side-tip p { margin: 4px 0 0; }
+.side-tip .tip-note { color: var(--text-faint); }
+.side-tip .tip-state { margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--border); color: var(--text); }
+.side-tip .tip-date { float: right; color: var(--text-faint); font-size: 11px; }
+.side-tip .tip-md { max-height: 300px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 82%, transparent); mask-image: linear-gradient(#000 82%, transparent); }
+.side-tip .tip-md h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--accent); margin: 8px 0 3px; }
+.side-tip .tip-md ul { padding-left: 16px; margin: 3px 0; }
+.side-tip .tip-md li { margin: 3px 0; }
+.side-tip .tip-md ul ul { margin: 2px 0; }
+.side-tip .tip-md code { font-size: 11px; background: var(--bg-3); padding: 0 4px; border-radius: 4px; }
+
 .theme-switch { padding: 12px 8px 6px; border-top: 1px solid var(--border); }
 .theme-switch-label { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 7px; }
 .theme-seg { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
@@ -574,6 +602,30 @@ kbd {
 
 /* 语言切换 */
 .sidebar-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* brand 旁的小版本标：悬停看最新更新，点击看完整版本历史（brand 是拖拽区，这里要豁免才点得到） */
+.brand-ver { font-size: 10.5px; font-weight: 500; letter-spacing: 0; color: var(--text-faint); border: 1px solid var(--border); border-radius: 5px; padding: 0 5px; cursor: pointer; vertical-align: 2px; -webkit-app-region: no-drag; }
+.brand-ver:hover { color: var(--accent); border-color: var(--accent); }
+.brand-ver.hidden { display: none; }
+
+/* 版本历史弹层：倒序全量更新记录 */
+.clog-overlay { padding-top: 7vh; }
+.clog-dialog { width: min(760px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+.clog-sub { float: right; font-size: 11px; font-weight: 400; color: var(--text-faint); }
+.clog-body { overflow-y: auto; min-height: 0; padding: 2px 2px 8px; }
+.clog-entry { padding: 14px 4px 6px; }
+.clog-entry + .clog-entry { border-top: 1px solid var(--border); }
+.clog-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 2px; }
+.clog-ver { font-size: 15px; font-weight: 700; color: var(--text); font-family: var(--font-display); }
+.clog-date { font-size: 11.5px; color: var(--text-faint); }
+.clog-curtag { font-size: 10.5px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); background: var(--accent-soft); border-radius: 99px; padding: 1px 8px; }
+.clog-md { font-size: 12.5px; line-height: 1.75; color: var(--text-dim); }
+.clog-md h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: var(--accent); margin: 12px 0 4px; }
+.clog-md ul { padding-left: 18px; margin: 4px 0; }
+.clog-md li { margin: 5px 0; }
+.clog-md li::marker { color: var(--text-faint); }
+.clog-md strong { color: var(--text); }
+.clog-md a { color: var(--accent); }
+.clog-md code { font-size: 11.5px; background: var(--bg-3); padding: 0 4px; border-radius: 4px; }
 .lang-toggle { cursor: pointer; color: var(--text-dim); font-size: 10.5px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 5px; flex: none; }
 .lang-toggle:hover { color: var(--accent); border-color: var(--accent); }
 
@@ -827,6 +879,114 @@ kbd {
 }
 .input-actions button:hover { color: var(--text); border-color: var(--accent); }
 .input-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+
+/* ---------- 微信 ClawBot：终端内的一小块，IM 风格（设计方向 A）。盖住终端正文，term-head 保留可点 ---------- */
+.wechat-view { position: absolute; top: 34px; left: 0; right: 0; bottom: 0; z-index: 8; background: var(--bg); display: flex; flex-direction: column; min-height: 0; }
+.wechat-view.hidden { display: none; }
+/* 一条标题栏 */
+.wx-bar { position: relative; height: 46px; flex: 0 0 auto; display: flex; align-items: center; gap: 9px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--border); background: var(--bg-2); }
+.wx-dot { width: 7px; height: 7px; border-radius: 50%; background: #07C160; box-shadow: 0 0 0 3px rgba(7,193,96,.14); flex: 0 0 7px; }
+.wx-dot.off { background: var(--text-dim); box-shadow: none; opacity: .55; }
+.wx-dot.checking { background: #e0a52e; box-shadow: 0 0 0 3px rgba(224,165,46,.16); animation: wxPulse 1s ease-in-out infinite; }
+.wx-dot.bad { background: #e5484d; box-shadow: 0 0 0 3px rgba(229,72,77,.16); }
+@keyframes wxPulse { 50% { opacity: .35; } }
+.wx-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.wx-status { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.wx-dot.bad ~ .wx-status, .wx-status.bad { color: #e5484d; }
+/* 连接失效 / 未连 → 醒目重连横幅，直接弹二维码重扫 */
+.wx-reconnect { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 9px 16px; background: color-mix(in srgb, #e5484d 9%, var(--bg-2)); border-bottom: 1px solid color-mix(in srgb, #e5484d 22%, var(--border)); }
+.wx-reconnect.hidden { display: none; }
+.wx-reconnect-msg { font-size: 12.5px; color: #c2342f; font-weight: 500; }
+.wx-reconnect-btn { flex: 0 0 auto; font-size: 12.5px; font-weight: 600; color: #fff; background: #e5484d; border: 0; padding: 6px 14px; border-radius: 7px; cursor: pointer; }
+.wx-reconnect-btn:hover { background: #d13b40; }
+.wx-spacer { flex: 1; }
+/* 安静的大脑下拉触发器 */
+.wx-brain { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-dim); padding: 5px 9px; border-radius: 7px; cursor: pointer; user-select: none; white-space: nowrap; }
+.wx-brain:hover, .wx-brain.open { background: var(--bg-3); color: var(--text); }
+.wx-brain .caret { font-size: 9px; opacity: .65; }
+.wx-x { width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--text-dim); border-radius: 6px; cursor: pointer; font-size: 14px; }
+.wx-x:hover { background: var(--bg-3); color: var(--text); }
+/* 下拉菜单 */
+.wx-menu { position: absolute; top: 42px; right: 38px; width: 204px; background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; z-index: 6; }
+.wx-menu.hidden { display: none; }
+.wx-mi { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--text); cursor: pointer; }
+.wx-mi:hover { background: var(--bg-3); }
+.wx-mi.cur { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.wx-mi[disabled] { opacity: .4; cursor: not-allowed; }
+.wx-mi .ck { margin-left: auto; color: var(--accent); font-weight: 700; }
+.wx-mi.danger { color: #c2603f; }
+.wx-sep { height: 1px; background: var(--border); margin: 6px 8px; }
+/* 内容区 */
+.wx-body { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; position: relative; }
+.wx-chat { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 13px; padding: 20px 22px; }
+.wx-empty { margin: auto; text-align: center; color: var(--text-dim); font-size: 13px; line-height: 1.75; max-width: 330px; }
+.wx-row { display: flex; align-items: flex-end; gap: 9px; max-width: 80%; }
+.wx-row.me { align-self: flex-end; flex-direction: row-reverse; }
+.wx-row.bot { align-self: flex-start; }
+.wx-av { width: 28px; height: 28px; border-radius: 8px; flex: 0 0 28px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.wx-av.bot { background: var(--bg-3); color: var(--accent); }
+.wx-av.me { background: var(--accent); color: var(--accent-ink); }
+.wx-bub { font-size: 13.5px; line-height: 1.55; padding: 9px 13px; border-radius: 13px; white-space: pre-wrap; word-break: break-word; }
+.wx-row.bot .wx-bub { background: var(--bg-2); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
+.wx-row.me .wx-bub { background: color-mix(in srgb, var(--accent) 22%, var(--bg-2)); color: var(--text); border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); border-bottom-right-radius: 4px; }
+.wx-bub.think { color: var(--text-dim); font-style: italic; }
+/* bot 气泡里的 markdown：紧凑排版，别把聊天撑散 */
+.wx-bub.md { white-space: normal; }
+.wx-bub.md > :first-child { margin-top: 0; }
+.wx-bub.md > :last-child { margin-bottom: 0; }
+.wx-bub.md p { margin: 6px 0; }
+.wx-bub.md ul, .wx-bub.md ol { margin: 6px 0; padding-left: 20px; }
+.wx-bub.md li { margin: 2px 0; }
+.wx-bub.md h1, .wx-bub.md h2, .wx-bub.md h3, .wx-bub.md h4 { margin: 8px 0 4px; font-size: 14.5px; }
+.wx-bub.md code { background: var(--bg-3); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+.wx-bub.md pre { background: var(--bg-3); padding: 9px 11px; border-radius: 8px; overflow-x: auto; margin: 6px 0; }
+.wx-bub.md pre code { background: none; padding: 0; }
+.wx-bub.md a { color: var(--accent); }
+.wx-bub.md blockquote { margin: 6px 0; padding-left: 10px; border-left: 3px solid var(--border); color: var(--text-dim); }
+.wx-bub.md table { border-collapse: collapse; margin: 6px 0; }
+.wx-bub.md th, .wx-bub.md td { border: 1px solid var(--border); padding: 3px 8px; }
+/* 用户发来的图片：气泡里直接显示原图（点击放大），不再只给「（图片）」文字 */
+.wx-img { display: block; max-width: 220px; max-height: 260px; border-radius: 9px; cursor: zoom-in; object-fit: cover; }
+.wx-img + .wx-img { margin-top: 6px; }
+.wx-cap { margin-top: 6px; }
+/* 上下文控制栏：token 进度条 + 整理/新对话 */
+.wx-ctx { display: flex; align-items: center; gap: 8px; padding: 5px 12px; border-bottom: 1px solid var(--border); background: var(--bg-1); flex-shrink: 0; }
+.wx-meter { width: 64px; height: 5px; border-radius: 3px; background: var(--bg-3); overflow: hidden; flex-shrink: 0; }
+.wx-meter-fill { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--accent); transition: width .4s ease; }
+.wx-meter-fill.hot { background: #e0533b; }
+.wx-meter-txt { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.wx-ctx-btn { font-size: 12px; padding: 3px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg-2); color: var(--text-dim); cursor: pointer; }
+.wx-ctx-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.wx-ctx-btn:disabled { opacity: .55; cursor: default; }
+/* 系统提示 / 分隔线：居中浅色一行 */
+.wx-sys { text-align: center; font-size: 11.5px; color: var(--text-dim); margin: 10px 0; }
+/* 扫码卡：点「连接手机微信」时覆盖在聊天上 */
+.wx-scan { position: absolute; inset: 0; background: var(--bg); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; z-index: 4; }
+.wx-scan.hidden { display: none; }
+.wx-qr { width: 200px; height: 200px; background: #fff; border-radius: 14px; padding: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); display: flex; align-items: center; justify-content: center; }
+.wx-qr img { width: 100%; height: 100%; display: block; }
+.wx-qr .wx-loading { color: #8a7d68; font-size: 12px; }
+.wx-scan-lead { font-size: 14px; font-weight: 500; color: var(--text); }
+.wx-scan-sub { font-size: 12.5px; color: var(--text-dim); max-width: 330px; text-align: center; line-height: 1.6; }
+.wx-scan-close { font-size: 12.5px; color: var(--text-dim); cursor: pointer; padding: 4px 10px; border-radius: 6px; }
+.wx-scan-close:hover { color: var(--text); background: var(--bg-3); }
+/* 自定义人格编辑面板（复用 scan 覆盖层） */
+.wx-persona { width: 460px; max-width: 86%; display: flex; flex-direction: column; gap: 8px; }
+.wx-persona-title { font-size: 14px; font-weight: 600; color: var(--text); }
+.wx-persona-sub { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.wx-persona-ta { width: 100%; background: var(--bg-2); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; font-size: 13px; line-height: 1.6; color: var(--text); font-family: inherit; resize: vertical; outline: none; }
+.wx-persona-ta:focus { border-color: var(--accent); }
+.wx-persona-btns { display: flex; align-items: center; gap: 6px; }
+/* 只读提示条（面板仅查看，不能从 fanbox 发送） */
+.wx-viewonly { flex: 0 0 auto; text-align: center; padding: 9px 12px; border-top: 1px solid var(--border); background: var(--bg-2); font-size: 12px; color: var(--text-faint); }
+.wx-send { font-size: 12.5px; color: var(--accent); font-weight: 600; padding: 7px 14px; border-radius: 8px; cursor: pointer; border: 0; background: transparent; }
+.wx-send:hover:not(:disabled) { background: var(--bg-3); }
+.wx-send:disabled { opacity: .4; cursor: default; }
+/* term-head 里的微信按钮：连上后点亮绿点 */
+.wechat-btn { position: relative; }
+.term-actions .wechat-btn.on { color: #07C160; }
+.wechat-dot { position: absolute; top: 1px; right: 1px; width: 6px; height: 6px; border-radius: 50%; background: #07C160; box-shadow: 0 0 0 1.5px var(--bg-2); }
+.wechat-dot.hidden { display: none; }
 
 /* 右键上下文菜单 */
 .context-menu {

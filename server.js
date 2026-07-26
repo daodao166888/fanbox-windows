@@ -2408,6 +2408,30 @@ function originAllowed(req) {
   try { return ALLOWED_HOSTS.has(new URL(o).hostname); } catch { return false; }
 }
 
+// ---------- 版本历史：解析随包分发的 CHANGELOG.md（Keep a Changelog 格式），侧栏版本号入口用 ----------
+let clogCache = null; // { mtime, data }
+function changelogData() {
+  try {
+    const file = path.join(__dirname, 'CHANGELOG.md');
+    const mtime = fs.statSync(file).mtimeMs;
+    if (clogCache && clogCache.mtime === mtime) return clogCache.data;
+    const raw = fs.readFileSync(file, 'utf8');
+    const entries = [];
+    const re = /^## \[([^\]]+)\](?:\s*-\s*(\S+))?\s*$/gm;
+    let m, prev = null;
+    while ((m = re.exec(raw))) {
+      if (prev) prev.body = raw.slice(prev.end, m.index).trim();
+      prev = { version: m[1], date: m[2] || '', end: re.lastIndex };
+      entries.push(prev);
+    }
+    if (prev) prev.body = raw.slice(prev.end).trim();
+    entries.forEach((e) => delete e.end);
+    const data = { ok: true, version: require('./package.json').version, entries };
+    clogCache = { mtime, data };
+    return data;
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+
 const server = http.createServer(async (req, res) => {
   if (!hostAllowed(req)) { res.writeHead(403); res.end('forbidden host'); return; }
   if (req.method === 'POST' && !originAllowed(req)) { res.writeHead(403); res.end('forbidden origin'); return; }
@@ -2418,6 +2442,9 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/api/roots') {
       return sendJSON(res, 200, { home: HOME, platform: PLATFORM, sep: path.sep, roots: defaultRoots() });
+    }
+    if (p === '/api/changelog') {
+      return sendJSON(res, 200, changelogData());
     }
     if (p === '/api/list') {
       return sendJSON(res, 200, await listDir(qp.get('path') || HOME));

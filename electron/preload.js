@@ -69,4 +69,30 @@ contextBridge.exposeInMainWorld('fanboxEnv', {
 // 皮肤图标切换
 contextBridge.exposeInMainWorld('fanboxSkin', {
   setIcon: (skin) => ipcRenderer.invoke('skin:set-icon', { skin }),
+// 电源守卫：侧栏「离开电脑」两个开关（合盖继续干活 / 微信遥控不断线），macOS 专属
+contextBridge.exposeInMainWorld('fanboxPower', {
+  state: () => ipcRenderer.invoke('power:state'),            // { platform, lid, wechat, active, busy, terms, wechatConnected }
+  setLid: (on) => ipcRenderer.invoke('power:setLid', { on }),
+  setWechat: (on) => ipcRenderer.invoke('power:setWechat', { on }),
+  onChange: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('power:changed', h); return () => ipcRenderer.removeListener('power:changed', h); },
+});
+
+// 微信 ClawBot：不经 openclaw，直连 iLink + 本机 claude/codex；桌面输入框也能直接和本机大脑聊
+contextBridge.exposeInMainWorld('fanboxWechat', {
+  env: () => ipcRenderer.invoke('wechat:env'),            // { connected, account, target, targets, cwd, cwdName }
+  login: () => ipcRenderer.invoke('wechat:login'),        // 取二维码→轮询扫码（二维码/成功走事件）
+  setTarget: (target) => ipcRenderer.invoke('wechat:setTarget', { target }), // 切换大脑 codex / claude
+  setCwd: (dir) => ipcRenderer.invoke('wechat:setCwd', { dir }), // agent 工作目录跟随当前项目
+  setPersona: (persona) => ipcRenderer.invoke('wechat:setPersona', { persona }), // 自定义微信 bot 人格
+  send: (text) => ipcRenderer.invoke('wechat:send', { text }),   // 桌面输入框→本机大脑（不经微信）
+  conversation: (id) => ipcRenderer.invoke('wechat:conversation', { id }), // 取某会话消息（默认当前活跃）+ token 用量
+  newConversation: (id) => ipcRenderer.invoke('wechat:newConversation', { id }), // 新对话（硬重置 session，靠记忆续）
+  compact: (id) => ipcRenderer.invoke('wechat:compact', { id }),         // 整理对话（flush 记忆 + 摘要续场 + 换 session）
+  disconnect: () => ipcRenderer.invoke('wechat:disconnect'),
+  cancel: () => ipcRenderer.invoke('wechat:cancel'),
+  check: () => ipcRenderer.invoke('wechat:check'),                     // 主动探活 → { state: connected/expired/unreachable/disconnected }
+  onQr: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('wechat:qr', h); return () => ipcRenderer.removeListener('wechat:qr', h); },
+  onConnected: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('wechat:connected', h); return () => ipcRenderer.removeListener('wechat:connected', h); },
+  onMessage: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('wechat:message', h); return () => ipcRenderer.removeListener('wechat:message', h); },
+  onExpired: (cb) => { const h = (e, m) => cb(m); ipcRenderer.on('wechat:expired', h); return () => ipcRenderer.removeListener('wechat:expired', h); },
 });
