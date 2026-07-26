@@ -370,17 +370,16 @@ window.typeset = (() => {
     if (!height) throw new Error('文章排出来是空的');
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${EXPORT_W}" height="${height}">`
       + `<foreignObject width="100%" height="100%">${xhtml}</foreignObject></svg>`;
-    const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml' }));
-    let im;
-    try {
-      im = await new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('长图渲染失败'));
-        img.src = url;
-      });
-      await im.decode().catch(() => { /* 已 onload，decode 报错不拦路 */ });
-    } finally { URL.revokeObjectURL(url); }
+    // 必须走 data:，不能走 blob:——Chromium 里 blob: 装载的 foreignObject SVG 画上 canvas 会把
+    // canvas 判成被污染（tainted），toDataURL 直接抛错；data: 则干净
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    const im = await new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('长图渲染失败'));
+      img.src = url;
+    });
+    await im.decode().catch(() => { /* 已 onload，decode 报错不拦路 */ });
     // 清晰度 2x；超长文章自动降倍率——Chromium canvas 单边上限 65535，越界会静默给空图
     const k = Math.min(2, 65000 / height);
     const cv = document.createElement('canvas');
