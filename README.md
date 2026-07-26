@@ -132,8 +132,8 @@ The UI was designed with [huashu-design](https://github.com/alchaincyf/huashu-de
 
 ### Editing · WYSIWYG / 编辑 · 所见即所得
 
-- **Markdown** — Milkdown Crepe 提供 Notion 式所见即所得，打开就是编辑态，停笔 0.8 秒自动保存。  
-  Milkdown Crepe, Notion-style WYSIWYG; opens in edit mode, auto-saves 0.8s after you stop typing.
+- **Markdown** — Milkdown Crepe 提供 Notion 式所见即所得，打开就是编辑态，停笔 0.8 秒自动保存。顶部 `富文本 / 阅读 / 源码` 三档随时切；少数文件富文本往返会丢内容（校验不过），只灰掉富文本、默认落在只读阅读模式，文章照看，要改点源码。  
+  Milkdown Crepe, Notion-style WYSIWYG; opens in edit mode, auto-saves 0.8s after you stop typing. A `Rich / Read / Source` switch sits on top; when a file can't survive a WYSIWYG round-trip, only Rich is disabled — it falls back to the rendered read-only view, not raw source.
 - **代码/JSON / Code/JSON** — Monaco 编辑器（VS Code 同款内核），随皮肤切换主题。  
   Monaco (the VS Code core), themed per skin.
 - **图片标注 / Image annotation** — 画笔/箭头/文字/打码、格式转换、压缩、调分辨率，覆盖原图前有确认。  
