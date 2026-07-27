@@ -4706,17 +4706,20 @@ const cronPanel = {
     if (this.editing != null) return this.renderForm(body);
     const d = this.data || {}; const tasks = d.tasks || [];
     body.innerHTML = `${d.desktop === false ? '<div class="cron-note">浏览器版只能管理任务；到点开窗执行需要 FanBox 桌面版开着</div>' : ''}
-      <div class="cron-list">${tasks.map((t) => `
+      <div class="cron-list">${tasks.map((t) => {
+        const meta = `${this.schedLabel(t.schedule)} · ${this.agentLabel(t)} · ${baseOf(t.cwd || '') || '~'}${t.enabled && t.nextRun ? ` · 下次 ${this.fmtAbs(t.nextRun)}` : ''}`;
+        return `
         <div class="cron-row ${t.enabled ? '' : 'off'}" data-id="${t.id}">
           <label class="pw-switch ${t.enabled ? 'on' : ''}" data-act="toggle" title="${t.enabled ? '停用（保留任务，不再到点执行）' : '启用'}"><i></i></label>
           <div class="cron-main">
-            <div class="cron-name">${escapeHtml(t.name)}${t.createdBy === 'agent' ? ' <i class="cron-src">agent 设的</i>' : ''}${t.full ? ' <i class="cron-full" title="全自动：执行时跳过所有确认">全自动</i>' : ''}</div>
-            <div class="cron-meta">${escapeHtml(this.schedLabel(t.schedule))} · ${this.agentLabel(t)} · ${escapeHtml(baseOf(t.cwd || '') || '~')}${t.enabled && t.nextRun ? ` · 下次 ${this.fmtAbs(t.nextRun)}` : ''} ${this.lastBadge(t)}</div>
+            <div class="cron-name"><span class="cron-name-text" title="${escapeHtml(t.name)}">${escapeHtml(t.name)}</span>${t.createdBy === 'agent' ? '<i class="cron-src">agent 设的</i>' : ''}${t.full ? '<i class="cron-full" title="全自动：执行时跳过所有确认">全自动</i>' : ''}</div>
+            <div class="cron-meta" title="${escapeHtml(meta)}">${escapeHtml(meta)} ${this.lastBadge(t)}</div>
           </div>
           <button class="cron-btn" data-act="run" title="立即执行一次（新开终端窗口）">▶</button>
           <button class="cron-btn" data-act="edit" title="编辑">编辑</button>
           <button class="cron-btn danger" data-act="del" title="删除">删除</button>
-        </div>`).join('') || `<div class="empty-state">还没有定时任务<br><br><span class="usage-sub">点下方「新建」，或在终端里对 agent 说一句<br>「每天早上 9 点到写作目录整理灵感箱」</span></div>`}
+        </div>`;
+      }).join('') || `<div class="empty-state">还没有定时任务<br><br><span class="usage-sub">点下方「新建」，或在终端里对 agent 说一句<br>「每天早上 9 点到写作目录整理灵感箱」</span></div>`}
       </div>
       <div class="cron-foot">
         <button class="cron-add" id="cron-new">＋ 新建定时任务</button>

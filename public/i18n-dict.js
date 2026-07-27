@@ -343,6 +343,7 @@ window.FANBOX_DICT = {
   '双击': 'double-click',
   '系统打开；预览里': 'to open with the system; in preview,',
   '编辑': 'Edit',
+  '删除': 'Delete',
   'md 走所见即所得、': 'gives WYSIWYG markdown,',
   '可标注/打码/转格式': 'lets you annotate / pixelate / convert',
   'agent 改了哪些文件，列表实时高亮「改·N」，不用切窗口盯着看': 'Files agents touch light up live as "edited ×N" — no window-switching to keep watch',
