@@ -161,6 +161,8 @@ kbd {
 /* ---------- Skills 透视入口（侧栏底部工具簇）---------- */
 #skills-entry { margin-top: auto; padding: 12px 16px 0; border-top: 1px solid var(--border); cursor: pointer; user-select: none; }
 #skills-entry:hover { color: var(--text-dim); }
+#cron-entry { padding: 10px 16px 0; cursor: pointer; user-select: none; }
+#cron-entry:hover { color: var(--text-dim); }
 
 /* ---------- Agent 用量（侧栏底部，可开合）---------- */
 #usage-sec { padding: 12px 8px 6px; border-top: none; margin-top: 6px; }
