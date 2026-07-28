@@ -11,6 +11,15 @@
 
 ## [Unreleased]
 
+## [2.12.2] - 2026-07-28
+
+### Fixed
+- **终端输入重复问题**：`pty:input`/`pty:resize`/`pty:kill` 各有两个重复注册的 IPC handler（merge 残留），每次击键写两次 pty——ClaudeClaude 的输入直接被双写，输出被吞。删掉无 `recEvent` 的旧 handler，保留带录制的正确 handler
+- **版本号显示**：侧栏版本徽章从 `text-faint` 提亮为 `text-dim`，字重 500→600，字号 10.5→11px，不再是「看不清的灰字」
+
+### Added
+- **关于弹窗**：侧栏底部新增 ⓘ 按钮，点击弹出「关于 FanBox」面板，展示版本号、平台、提交号等基本信息，支持一键查看完整更新日志
+
 ## [2.12.1] - 2026-07-26
 
 ### Fixed

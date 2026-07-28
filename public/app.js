@@ -4615,6 +4615,44 @@ const verInfo = {
   },
 };
 
+// ---------- 关于 FanBox ----------
+const aboutPanel = {
+  ov: null,
+  open() {
+    if (this.ov) return;
+    const d = verInfo.data || {};
+    const ver = d.version || (window.fanboxUpdate ? 'FanBox' : '');
+    const plat = (window.fanboxEnv && window.fanboxEnv.platform) || '';
+    const arch = (window.fanboxEnv && window.fanboxEnv.arch) || '';
+    const ov = document.createElement('div');
+    ov.className = 'input-overlay';
+    ov.innerHTML = `<div class="input-dialog about-dialog">
+      <div class="about-header">
+        <div class="about-logo">📦</div>
+        <div><div class="about-title">FanBox</div><div class="about-ver">v${escapeHtml(ver)}${plat ? ' · ' + escapeHtml(plat) : ''}</div></div>
+      </div>
+      <div class="about-body">
+        <div class="about-row"><span class="about-row-label">版本</span><span class="about-row-val">v${escapeHtml(ver)}</span></div>
+        <div class="about-row"><span class="about-row-label">平台</span><span class="about-row-val">${escapeHtml(plat)}</span></div>
+        <div class="about-row"><span class="about-row-label">运行方式</span><span class="about-row-val">${window.fanboxEnv && window.fanboxEnv.isDesktopApp ? '桌面应用' : '浏览器'}</span></div>
+        <div class="about-row"><span class="about-row-label">数据安全</span><span class="about-row-val">本地运行 · 数据不出本机</span></div>
+      </div>
+      <div class="about-actions">
+        <button class="ghost-btn" id="about-changelog">📋 版本历史</button>
+        <button class="ghost-btn" id="about-close">关闭</button>
+      </div>
+    </div>`;
+    document.body.appendChild(ov);
+    this.ov = ov;
+    const close = () => { ov.remove(); this.ov = null; document.removeEventListener('keydown', onKey, true); };
+    const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
+    ov.onclick = (ev) => { if (ev.target === ov) close(); };
+    document.addEventListener('keydown', onKey, true);
+    ov.querySelector('#about-close').onclick = close;
+    ov.querySelector('#about-changelog').onclick = () => { close(); verInfo.showAll(); };
+  },
+};
+
 // ---------- 定时任务：到点自动开一个终端窗口跑 agent / 命令（侧栏入口 + 管理弹层）----------
 const cronPanel = {
   data: null, editing: null, ov: null,
@@ -4875,6 +4913,7 @@ async function init() {
   await loadFavorites();
   powerBar.init();
   verInfo.init();
+  $('#about-btn').onclick = () => aboutPanel.open();
   cronPanel.syncBadge();
   loadAgentProjects();
   setInterval(loadAgentProjects, 120000); // agent 项目入口保持新鲜（服务端有 60s 缓存，开销很小）
