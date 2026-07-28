@@ -2636,7 +2636,7 @@ const server = http.createServer(async (req, res) => {
     // 暴露面与 /api/raw 等价（都接受任意绝对路径），且同样只对本机回环开放。
     // HTML 文件额外注入 viewport，让预览框内宽度自适应、滚动稳定。
     if (p.startsWith('/fs/')) {
-      const fsPath = decodeURIComponent(p.slice(3));
+      const fsPath = decodeURIComponent(p.slice(4));
       const fsExt = (ext(fsPath) || '').toLowerCase();
       if (fsExt === 'html' || fsExt === 'htm') {
         return serveHtmlPreview(req, res, fsPath);
@@ -2917,15 +2917,16 @@ const PREVIEW_PORT = PORT + 1;
 function previewPathAllowed(file) {
   const real = path.resolve(file);
   const home = path.resolve(HOME);
-  if (real !== home && !real.startsWith(home + path.sep)) return false; // 只放行主目录以下
-  return !real.slice(home.length).split(path.sep).some((s) => s.startsWith('.')); // 任一段是点目录/点文件 → 拒
+  if (real !== home && !real.startsWith(home + path.sep)) return false;
+  return !real.slice(home.length).split(path.sep).some((s) => s.startsWith('.'));
 }
 const previewServer = http.createServer(async (req, res) => {
   if (!hostAllowed(req)) { res.writeHead(403); res.end('forbidden host'); return; }
   if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); res.end('method not allowed'); return; }
   const p = new URL(req.url, `http://localhost:${PREVIEW_PORT}`).pathname;
   if (!p.startsWith('/fs/')) { res.writeHead(403); res.end('preview server serves /fs/ only'); return; }
-  const raw = decodeURIComponent(p.slice(3));
+  // p = /fs/... → slice(4) 跳过 "/fs/"
+  const raw = decodeURIComponent(p.slice(4));
   let resolved;
   try { resolved = resolvePath(raw); } catch { res.writeHead(400); res.end('bad path'); return; }
   if (!previewPathAllowed(resolved)) { res.writeHead(403); res.end('outside preview scope'); return; }

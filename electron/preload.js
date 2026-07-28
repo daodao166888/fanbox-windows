@@ -69,6 +69,7 @@ contextBridge.exposeInMainWorld('fanboxEnv', {
 // 皮肤图标切换
 contextBridge.exposeInMainWorld('fanboxSkin', {
   setIcon: (skin) => ipcRenderer.invoke('skin:set-icon', { skin }),
+});
 // 电源守卫：侧栏「离开电脑」两个开关（合盖继续干活 / 微信遥控不断线），macOS 专属
 contextBridge.exposeInMainWorld('fanboxPower', {
   state: () => ipcRenderer.invoke('power:state'),            // { platform, lid, wechat, active, busy, terms, wechatConnected }

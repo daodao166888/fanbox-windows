@@ -1326,16 +1326,6 @@ async function mdEditor(e, data, mode = 'rich') {
   const render = async (m) => {
     mode = m;
     mona.disposeIfAny(); crepe.disposeIfAny();
-    body.innerHTML =
-      `<div class="editor-bar"><button id="md-mode" class="ghost-btn">${m === 'rich' ? '源码' : '富文本'}</button><span id="md-status" class="editor-hint">自动保存 · ⌘S 立即保存</span></div>` +
-      `<div id="ed-host" class="${m === 'rich' ? 'crepe-host' : 'mona-host'}"></div>`;
-    $('#md-mode').onclick = async () => {
-      await flush();
-      content0 = getValue ? getValue() : content0;
-      render(m === 'rich' ? 'code' : 'rich');
-    };
-    const host = $('#ed-host');
-    if (m === 'rich') {
     const hostCls = { rich: 'crepe-host', read: 'read-host', code: 'mona-host', typeset: 'typeset-host' }[m];
     const seg = (id, label, on) =>
       `<button class="seg-btn${m === id ? ' active' : ''}" data-m="${id}"${on ? '' : ' disabled title="此文件含富文本无法无损保存的语法，改请用源码"'}>${label}</button>`;
@@ -2620,7 +2610,6 @@ function bindEvents() {
   usagePanel.bind();
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
-=======
   $('#cron-entry').onclick = () => cronPanel.show();
   $('#term-newtab').onclick = () => { wechatView.close(); term.newTab(); };
   $('.term-head').addEventListener('dblclick', (ev) => {
@@ -2869,7 +2858,6 @@ const term = {
     const want = this.sessions[saved.active];
     if (want) this.activate(want.id);
     if (!this.sessions.length) this.newTab(); // 快照坏了也保证有一个标签
-    player.refreshHint();
     localStorage.setItem('fb_term_open', '1');
   },
   applyDock() {

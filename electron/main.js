@@ -10,6 +10,27 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 
+function ignoreBrokenStdPipe(stream) {
+  if (!stream || !stream.on) return;
+  stream.on('error', (err) => {
+    if (!err || err.code === 'EPIPE') return;
+    try { fs.appendFileSync(path.join(os.tmpdir(), 'fanbox-main.log'), `[stdio] ${err.stack || err}\n`); } catch { /* */ }
+  });
+}
+ignoreBrokenStdPipe(process.stdout);
+ignoreBrokenStdPipe(process.stderr);
+
+for (const method of ['log', 'info', 'warn', 'error']) {
+  const original = console[method].bind(console);
+  console[method] = (...args) => {
+    try { original(...args); }
+    catch (err) {
+      if (!err || err.code === 'EPIPE') return;
+      try { fs.appendFileSync(path.join(os.tmpdir(), 'fanbox-main.log'), `[console.${method}] ${err.stack || err}\n`); } catch { /* */ }
+    }
+  };
+}
+
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
 process.env.FANBOX_NO_OPEN = '1';
 const PORT = Number(process.env.FANBOX_PORT) || 4567;
@@ -29,9 +50,72 @@ let win = null;
 // FANBOX_AGENT_TOKEN 环境变量可覆盖，供本地开发/自动化测试注入已知 token。
 const crypto = require('crypto');
 const AGENT_TOKEN = process.env.FANBOX_AGENT_TOKEN || crypto.randomBytes(24).toString('hex');
+const termTails = new Map();   // id -> 最近输出尾巴（~4KB），给微信/agent 状态摘要看
 const termBufs = new Map();    // id -> 去 ANSI 滚动缓冲（~200KB），/api/agent/read 的数据源
 const termLastOut = new Map(); // id -> 最近输出时间戳，wait 的 idle 判定
 const termWaiters = new Map(); // id -> Set<fn(text)>，wait 的增量输出订阅
+
+// ---------- 终端录制（asciicast v2）----------
+const recorders = new Map(); // id -> { path, stream, startedAt, t0 }
+function REC_DIR() {
+  const d = path.join(app.getPath('userData'), 'recordings');
+  try { fs.mkdirSync(d, { recursive: true }); } catch { /* */ }
+  return d;
+}
+function recStart(id, meta) {
+  try {
+    const dir = REC_DIR();
+    const t0 = Date.now();
+    const fp = path.join(dir, id.replace(/[^a-zA-Z0-9_-]/g, '') + '-' + t0 + '.cast');
+    const header = JSON.stringify({
+      version: 2, width: meta.cols || 80, height: meta.rows || 24,
+      timestamp: Math.round(t0 / 1000),
+      env: { SHELL: process.env.SHELL || '', TERM: 'xterm-256color' },
+      fanbox: { cwd: meta.cwd || '', theme: meta.theme || '', startedAt: t0 },
+    });
+    const stream = fs.createWriteStream(fp, { flags: 'wx' });
+    stream.write(header + '\n');
+    recorders.set(id, { path: fp, stream, startedAt: t0, t0 });
+    return { ok: true, path: fp };
+  } catch (e) {
+    console.error('[rec] start error:', e.message);
+    return { ok: false, error: e.message };
+  }
+}
+function recStop(id) {
+  const r = recorders.get(id);
+  if (!r) return;
+  try { r.stream.end(); } catch { /* */ }
+  recorders.delete(id);
+}
+function recEvent(id, type, data) {
+  const r = recorders.get(id);
+  if (!r) return;
+  const elapsed = (Date.now() - r.t0) / 1000;
+  const line = JSON.stringify([elapsed, type, data]) + '\n';
+  try { r.stream.write(line); } catch { /* 写失败不致命 */ }
+}
+async function termCwdByPid(pid) {
+  if (!pid) return '';
+  if (process.platform === 'win32') {
+    try {
+      const { execFileSync } = require('child_process');
+      const out = execFileSync('wmic', ['process', 'where', `processid=${pid}`, 'get', 'executablepath'], { encoding: 'utf8', timeout: 3000 });
+      const lines = out.trim().split('\n').filter(Boolean);
+      if (lines.length > 1) return path.dirname(lines[1].trim());
+    } catch { /* */ }
+    // Fallback: query via PowerShell
+    try {
+      const { execFileSync } = require('child_process');
+      const out = execFileSync('powershell', ['-NoProfile', '-Command', `(Get-Process -Id ${pid}).StartInfo.WorkingDirectory`], { encoding: 'utf8', timeout: 3000 });
+      return out.trim();
+    } catch { /* */ }
+    return '';
+  }
+  try {
+    return fs.readlinkSync('/proc/' + pid + '/cwd');
+  } catch { return ''; }
+}
 
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -307,7 +391,6 @@ function uiLang() {
 }
 const M = (zh, en) => (uiLang() === 'zh' ? zh : en);
 
-=======
 // ---------- 合盖继续运行（禁用合盖休眠）----------
 // macOS 的「合盖休眠」是独立机制，caffeinate / powerSaveBlocker 这类 power assertion 都挡不住，
 // 唯一手段是 `pmset -a disablesleep 1`（需 root）。为避免智能模式反复弹密码，首次开启时装一条
@@ -480,7 +563,6 @@ function buildMenu() {
       { role: 'reload', label: M('重新加载', 'Reload') }, { role: 'toggleDevTools', label: M('开发者工具', 'Developer Tools') },
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
       { type: 'separator' }, { role: 'togglefullscreen', label: M('全屏', 'Full Screen') },
-=======
       ...(isMac ? [{ type: 'separator' }, {
         // 合盖继续干活：仅在检测到 agent 正在干活时真正生效（智能模式）；勾选状态反映用户意图
         label: lidActive ? M('合盖继续干活（生效中）', 'Keep working with lid closed (active)') : M('合盖继续干活', 'Keep working with lid closed'),
@@ -545,11 +627,8 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows }) => {
     });
   } catch (err) { return { ok: false, error: err.message }; }
   terminals.set(id, p);
-  p.onData((data) => { if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data }); });
-  p.onExit(({ exitCode }) => {
-    terminals.delete(id);
   refreshLidGuard(); // 开关开着时，第一个终端起来即生效
-  recStart(id, { cols, rows, cwd: startCwd, theme });
+  recStart(id, { cols, rows, cwd: startCwd, theme: '' });
   p.onData((data) => {
     if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data });
     // 开关开着但还没生效 → 有输出说明可能刚开工，尽快结算电源守卫（1s 去抖）
@@ -914,7 +993,6 @@ ipcMain.handle('pty:proc', (e, { id }) => {
   return p ? { ok: true, proc: p.process || '' } : { ok: false };
 });
 
-=======
 // 编排见 electron/wechat/bridge.js（iLink 客户端 ilink.js + 本机 CLI 驱动 driver.js）。
 // 参考的开源项目与署名见 docs/08-微信ClawBot-参考与署名.md。
 const wechatBridge = require('./wechat/bridge');
