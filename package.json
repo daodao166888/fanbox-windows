@@ -1,6 +1,6 @@
 {
   "name": "fanbox",
-  "version": "2.12.2-win",
+  "version": "2.12.1-win.1",
   "bin": {
     "fanbox": "server.js"
   },

@@ -11,7 +11,7 @@
 
 ## [Unreleased]
 
-## [2.12.2] - 2026-07-28
+## [2.12.1-win.1] - 2026-07-28
 
 ### Fixed
 - **终端输入重复问题**：`pty:input`/`pty:resize`/`pty:kill` 各有两个重复注册的 IPC handler（merge 残留），每次击键写两次 pty——ClaudeClaude 的输入直接被双写，输出被吞。删掉无 `recEvent` 的旧 handler，保留带录制的正确 handler
